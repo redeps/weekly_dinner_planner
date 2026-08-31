@@ -67,7 +67,7 @@ proving SQLite is reachable.
 - grouped-by-store-category read-only list view
 - regenerates automatically when a day is swapped
 
-## Milestone 7 — Cook Mode ⬜
+## Milestone 7 — Cook Mode ✅
 
 - "Start Cooking" action on Recipe Detail / Day view
 - large-font, step-by-step instructions view (steps derived from the

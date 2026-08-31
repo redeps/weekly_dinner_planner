@@ -59,7 +59,7 @@ if st.button("Finalize Plan (mark all cooked)"):
 for plan_day in list_plan_days(conn, week_plan.id):
     recipe = get_recipe(conn, plan_day.recipe_id) if plan_day.recipe_id else None
     with st.container(border=True):
-        cols = st.columns([1, 3, 1, 1, 1.3])
+        cols = st.columns([1, 2.5, 1, 1, 1, 1.3])
         cols[0].write(f"**{plan_day.day_of_week.capitalize()}**")
         cols[0].caption(plan_day.date)
         if recipe:
@@ -79,9 +79,12 @@ for plan_day in list_plan_days(conn, week_plan.id):
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))
+            if cols[4].button("Cook", key=f"cook_day_{plan_day.id}"):
+                st.session_state["selected_recipe_id"] = recipe.id
+                st.switch_page("pages/8_Cook_Mode.py")
             if has_been_cooked(conn, plan_day.id):
-                cols[4].write("✓ Cooked")
-            elif cols[4].button("Mark Cooked", key=f"mark_cooked_{plan_day.id}"):
+                cols[5].write("✓ Cooked")
+            elif cols[5].button("Mark Cooked", key=f"mark_cooked_{plan_day.id}"):
                 mark_day_cooked(conn, plan_day.id)
                 st.rerun()
         else:

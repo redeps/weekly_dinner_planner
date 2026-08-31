@@ -29,6 +29,10 @@ if recipe.is_quick_fallback:
     badges += " · ⚡ quick fallback"
 st.caption(badges)
 
+if st.button("▶ Start Cooking", type="primary"):
+    st.session_state["selected_recipe_id"] = recipe.id
+    st.switch_page("pages/8_Cook_Mode.py")
+
 st.write(f"**Servings:** {recipe.servings}")
 
 st.subheader("Ingredients")
