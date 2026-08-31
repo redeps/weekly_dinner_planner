@@ -309,3 +309,102 @@ def test_get_latest_week_plan_returns_none_when_no_plans(conn):
 
 def test_get_week_plan_returns_none_for_missing_id(conn):
     assert plan_service.get_week_plan(conn, 999) is None
+
+
+# --- get_plan_day ---
+
+
+def test_get_plan_day_returns_none_for_missing_id(conn):
+    assert plan_service.get_plan_day(conn, 999) is None
+
+
+def test_get_plan_day_returns_correct_row(conn):
+    make_recipe(conn)
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(7)
+    )
+    monday = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == "monday"
+    )
+    fetched = plan_service.get_plan_day(conn, monday.id)
+    assert fetched == monday
+
+
+# --- swap_day_recipe ---
+
+
+def test_swap_day_recipe_raises_for_missing_plan_day(conn):
+    with pytest.raises(ValueError):
+        plan_service.swap_day_recipe(conn, 999)
+
+
+def test_swap_day_recipe_raises_when_no_active_recipes(conn):
+    recipe = make_recipe(conn)
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(8)
+    )
+    monday = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == "monday"
+    )
+    recipe_service.deactivate_recipe(conn, recipe.id)
+    with pytest.raises(ValueError):
+        plan_service.swap_day_recipe(conn, monday.id)
+
+
+def test_swap_day_recipe_excludes_the_swapped_out_recipe(conn):
+    original = make_recipe(conn, name="Original")
+    replacement = make_recipe(conn, name="Replacement")
+    week_plan_id = plan_service.generate_week_plan(
+        conn,
+        week_start_date=dt.date(2026, 8, 31),
+        calendar=default_calendar(),
+        rng=random.Random(0),
+    )
+    days = plan_service.list_plan_days(conn, week_plan_id)
+    monday = next(d for d in days if d.day_of_week == "monday")
+    original_recipe_id = monday.recipe_id
+
+    new_recipe = plan_service.swap_day_recipe(conn, monday.id, rng=random.Random(9))
+
+    assert new_recipe.id != original_recipe_id
+    assert new_recipe.id in (original.id, replacement.id)
+    updated = plan_service.get_plan_day(conn, monday.id)
+    assert updated.recipe_id == new_recipe.id
+
+
+def test_swap_day_recipe_only_changes_that_day(conn):
+    for i in range(3):
+        make_recipe(conn, name=f"Recipe {i}")
+    week_plan_id = plan_service.generate_week_plan(
+        conn,
+        week_start_date=dt.date(2026, 8, 31),
+        calendar=default_calendar(),
+        rng=random.Random(10),
+    )
+    before = {d.id: d.recipe_id for d in plan_service.list_plan_days(conn, week_plan_id)}
+    monday = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == "monday"
+    )
+
+    plan_service.swap_day_recipe(conn, monday.id, rng=random.Random(11))
+
+    after = {d.id: d.recipe_id for d in plan_service.list_plan_days(conn, week_plan_id)}
+    for plan_day_id, original_recipe_id in before.items():
+        if plan_day_id == monday.id:
+            continue
+        assert after[plan_day_id] == original_recipe_id, "swap must not touch other days"
+
+
+def test_swap_day_recipe_falls_back_to_same_recipe_when_it_is_the_only_option(conn):
+    only = make_recipe(conn, name="Only One")
+    week_plan_id = plan_service.generate_week_plan(
+        conn,
+        week_start_date=dt.date(2026, 8, 31),
+        calendar=default_calendar(),
+        rng=random.Random(12),
+    )
+    monday = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == "monday"
+    )
+    result = plan_service.swap_day_recipe(conn, monday.id, rng=random.Random(13))
+    assert result.id == only.id

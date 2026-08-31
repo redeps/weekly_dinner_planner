@@ -1,7 +1,6 @@
 """
-Week Plan screen — 7 days, each clickable into its recipe. See
-docs/PRODUCT_SPEC.md §14. Swap (Milestone 5) is not part of this screen
-yet — each day just links to the existing Recipe Detail screen.
+Week Plan screen — 7 days, each clickable into its recipe, with a swap
+action per day. See docs/PRODUCT_SPEC.md §14 and §10.
 """
 
 import datetime as dt
@@ -11,7 +10,12 @@ import streamlit as st
 from database import get_connection
 from models import DAYS_OF_WEEK
 from services.calendar import build_default_week_calendar
-from services.plan_generation import generate_week_plan, get_latest_week_plan, list_plan_days
+from services.plan_generation import (
+    generate_week_plan,
+    get_latest_week_plan,
+    list_plan_days,
+    swap_day_recipe,
+)
 from services.recipes import get_recipe
 
 st.set_page_config(page_title="Week Plan — Meal Planner", page_icon="🍽️")
@@ -50,7 +54,7 @@ st.caption(f"Week of {week_plan.week_start_date}")
 for plan_day in list_plan_days(conn, week_plan.id):
     recipe = get_recipe(conn, plan_day.recipe_id) if plan_day.recipe_id else None
     with st.container(border=True):
-        cols = st.columns([1, 3, 1])
+        cols = st.columns([1, 3, 1, 1])
         cols[0].write(f"**{plan_day.day_of_week.capitalize()}**")
         cols[0].caption(plan_day.date)
         if recipe:
@@ -64,5 +68,11 @@ for plan_day in list_plan_days(conn, week_plan.id):
             if cols[2].button("View", key=f"view_day_{plan_day.id}"):
                 st.session_state["selected_recipe_id"] = recipe.id
                 st.switch_page("pages/3_Recipe_Detail.py")
+            if cols[3].button("Swap", key=f"swap_day_{plan_day.id}"):
+                try:
+                    swap_day_recipe(conn, plan_day.id)
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
         else:
             cols[1].write("_No recipe assigned._")

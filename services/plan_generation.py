@@ -215,3 +215,44 @@ def list_plan_days(conn: sqlite3.Connection, week_plan_id: int) -> list[PlanDay]
         "SELECT * FROM plan_days WHERE week_plan_id = ? ORDER BY date", (week_plan_id,)
     ).fetchall()
     return [_row_to_plan_day(row) for row in rows]
+
+
+def get_plan_day(conn: sqlite3.Connection, plan_day_id: int) -> Optional[PlanDay]:
+    row = _dict_cursor(conn).execute(
+        "SELECT * FROM plan_days WHERE id = ?", (plan_day_id,)
+    ).fetchone()
+    return _row_to_plan_day(row) if row else None
+
+
+def swap_day_recipe(
+    conn: sqlite3.Connection, plan_day_id: int, *, rng: Optional[random.Random] = None
+) -> Recipe:
+    """Replace a single day's recipe, excluding the one being swapped out,
+    using the same scoring as plan generation. Only this day's `plan_days`
+    row changes — the rest of the week is untouched (see docs/DATA_MODEL.md).
+    """
+    rng = rng or random.Random()
+    plan_day = get_plan_day(conn, plan_day_id)
+    if plan_day is None:
+        raise ValueError(f"No such plan day: {plan_day_id}")
+
+    recipes = list_recipes(conn)
+    if not recipes:
+        raise ValueError("No active recipes to swap in.")
+
+    candidates = [r for r in recipes if r.id != plan_day.recipe_id] or recipes
+    season = current_season(dt.date.fromisoformat(plan_day.date))
+    last_cooked_by_recipe = last_cooked_dates(conn)
+
+    chosen = choose_recipe(
+        candidates,
+        season=season,
+        is_busy=plan_day.is_busy,
+        last_cooked_by_recipe=last_cooked_by_recipe,
+        today=dt.date.today(),
+        rng=rng,
+    )
+
+    conn.execute("UPDATE plan_days SET recipe_id = ? WHERE id = ?", (chosen.id, plan_day_id))
+    conn.commit()
+    return chosen

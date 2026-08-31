@@ -53,7 +53,7 @@ proving SQLite is reachable.
 - decide and record the rotation "recently cooked" window (e.g. 3 weeks) in
   `DECISIONS.md`
 
-## Milestone 5 — Editing / Swapping ⬜
+## Milestone 5 — Editing / Swapping ✅
 
 - swap action on any single day, replacing that day's recipe without
   touching the rest of the week
