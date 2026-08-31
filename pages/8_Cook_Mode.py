@@ -12,6 +12,7 @@ services/cook_mode.py.
 import streamlit as st
 
 from database import get_connection
+from services import photos
 from services.cook_mode import split_instructions_into_steps
 from services.ingredients import list_ingredients
 from services.recipes import get_recipe
@@ -43,6 +44,9 @@ if st.session_state.get("cook_mode_recipe_id") != recipe.id:
     st.session_state["cook_mode_recipe_id"] = recipe.id
 
 st.caption(recipe.name)
+
+if photos.photo_exists(recipe.photo_path):
+    st.image(str(photos.resolve_photo_path(recipe.photo_path)), width=150)
 
 if not steps:
     st.info("No instructions to cook from yet.")

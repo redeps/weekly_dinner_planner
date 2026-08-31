@@ -140,7 +140,7 @@ from existing cookbooks is a real need. See `docs/PRODUCT_SPEC.md` §16 and
   fixtures, backend-selection logic for §16c, and a mocked-response test
   for the photo-import path
 
-## Milestone 11 — Photos ⬜
+## Milestone 11 — Photos ✅
 
 - upload a photo when adding/editing a recipe
 - resize/compress on save

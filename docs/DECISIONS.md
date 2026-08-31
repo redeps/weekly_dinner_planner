@@ -291,3 +291,34 @@ the two entries after it):
   live Gemini-available code paths (text and photo) are verified only via
   mocked responses — this environment has no Gemini API key, so they
   haven't been exercised against the real API.
+
+## 2026-08-31 — Recipe photo storage (Milestone 11)
+
+Implementation choices for `services/photos.py`:
+
+- **Every upload is normalized to a single `photos/<recipe_id>.jpg`**,
+  regardless of the source format (JPEG or PNG, including RGBA — converted
+  to RGB before saving as JPEG). This makes "replace" trivial (a new
+  upload just overwrites the same fixed filename — no orphaned old-format
+  file left behind) and keeps display code from needing to guess an
+  extension.
+- **Resize caps the longer edge at 1200px** (`Image.thumbnail`, so it only
+  ever shrinks, never upscales a smaller photo) **and saves at JPEG
+  quality 85.** Generous enough for anything this app displays (cards,
+  detail view, a small Cook Mode thumbnail), while keeping files small for
+  a household git-ignored `photos/` folder that isn't backed up elsewhere
+  yet.
+- **A failed photo (unreadable upload) doesn't block saving the rest of
+  the recipe.** The name/ingredients/instructions are written first;
+  photo processing is attempted after and, if it raises, the recipe is
+  still saved and a warning is shown on the following Recipe Detail view
+  rather than losing the user's typed data over an unrelated bad file. The
+  live preview shown immediately after choosing a file is wrapped the same
+  way — an invalid file can't crash the page before Save is even clicked
+  (caught by testing before shipping: an unreadable upload originally
+  crashed the whole page at preview time, not just at save time).
+- **Verified with a real simulated upload**, not just the service layer in
+  isolation: `AppTest`'s `file_uploader.upload()` drives the actual
+  widget, through resize/save, through the DB write, through display on
+  all four required screens (recipe cards, Recipe Detail, Week Plan day
+  rows, Cook Mode).

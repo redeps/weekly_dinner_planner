@@ -13,7 +13,7 @@ import streamlit as st
 
 from database import get_connection
 from models import DAYS_OF_WEEK
-from services import ai_assist
+from services import ai_assist, photos
 from services.calendar import build_default_week_calendar
 from services.cook_history import finalize_plan, has_been_cooked, mark_day_cooked
 from services.plan_generation import (
@@ -70,6 +70,8 @@ for plan_day in list_plan_days(conn, week_plan.id):
         cols[0].write(f"**{plan_day.day_of_week.capitalize()}**")
         cols[0].caption(plan_day.date)
         if recipe:
+            if photos.photo_exists(recipe.photo_path):
+                cols[1].image(str(photos.resolve_photo_path(recipe.photo_path)), width=60)
             label = recipe.name
             if plan_day.is_busy:
                 label += " · busy day"

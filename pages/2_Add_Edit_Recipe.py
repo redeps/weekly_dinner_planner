@@ -1,9 +1,9 @@
 """
-Add/Edit Recipe form, including a repeatable ingredient-rows section.
-Photo upload for the recipe's own photo (Milestone 11) is not part of
-this form yet — see docs/ROADMAP.md. Photo *import* (extracting a draft
-from a photo of a cookbook page) is different and is available here —
-see docs/PRODUCT_SPEC.md §16b.
+Add/Edit Recipe form, including a repeatable ingredient-rows section and
+the recipe's own photo (upload/replace/remove — see docs/PRODUCT_SPEC.md
+§14, resized/compressed on save by services/photos.py). This is separate
+from photo *import* (extracting a draft from a photo of a cookbook page)
+— see docs/PRODUCT_SPEC.md §16b.
 
 Recipe import layers three paths, per docs/PRODUCT_SPEC.md §16 (see
 docs/DECISIONS.md for the reasoning):
@@ -25,7 +25,7 @@ import streamlit as st
 
 from database import get_connection
 from models import SEASONALITIES, STORE_CATEGORIES
-from services import ai_assist, recipe_import
+from services import ai_assist, photos, recipe_import
 from services.ingredients import list_ingredients, replace_recipe_ingredients
 from services.recipes import create_recipe, get_recipe, update_recipe
 
@@ -59,7 +59,14 @@ if st.session_state.get("ingredient_rows_for") != target_recipe_id:
     # showing whatever was last typed unless we clear it here whenever the
     # target recipe changes — the same staleness problem the ingredient
     # rows below already guard against.
-    for _key in ("af_name", "af_cook_time", "af_servings", "af_instructions"):
+    for _key in (
+        "af_name",
+        "af_cook_time",
+        "af_servings",
+        "af_instructions",
+        "af_photo_upload",
+        "af_remove_photo",
+    ):
         st.session_state.pop(_key, None)
     rows = []
     if existing:
@@ -152,6 +159,25 @@ if not existing:
                         "Couldn't extract a recipe from that photo — try a clearer "
                         "image, or fill in the form manually below."
                     )
+
+st.subheader("Photo")
+current_photo_path = existing.photo_path if existing else None
+if photos.photo_exists(current_photo_path):
+    st.image(str(photos.resolve_photo_path(current_photo_path)), width=200)
+    remove_photo = st.checkbox("Remove current photo", key="af_remove_photo")
+else:
+    remove_photo = False
+
+recipe_photo_upload = st.file_uploader(
+    "Replace photo" if photos.photo_exists(current_photo_path) else "Upload a photo",
+    type=["jpg", "jpeg", "png"],
+    key="af_photo_upload",
+)
+if recipe_photo_upload is not None:
+    try:
+        st.image(recipe_photo_upload, width=200, caption="New photo preview")
+    except Exception:
+        st.warning("That file doesn't look like a valid image.")
 
 st.session_state.setdefault("af_name", existing.name if existing else "")
 st.session_state.setdefault("af_cook_time", existing.cook_time_minutes if existing else 30)
@@ -277,9 +303,26 @@ if submitted:
         else:
             saved_id = create_recipe(conn, **fields)
         replace_recipe_ingredients(conn, saved_id, ingredients)
+
+        photo_error = None
+        if recipe_photo_upload is not None:
+            try:
+                relative_path = photos.save_recipe_photo(recipe_photo_upload.getvalue(), saved_id)
+                update_recipe(conn, saved_id, photo_path=relative_path)
+            except Exception:
+                photo_error = (
+                    "Recipe saved, but that photo couldn't be processed — try a "
+                    "different image."
+                )
+        elif remove_photo:
+            photos.delete_recipe_photo(saved_id)
+            update_recipe(conn, saved_id, photo_path=None)
+
         st.session_state["selected_recipe_id"] = saved_id
         st.session_state.pop("edit_recipe_id", None)
         st.session_state.pop("ingredient_rows_for", None)
+        if photo_error:
+            st.session_state["photo_error_message"] = photo_error
         st.switch_page("pages/3_Recipe_Detail.py")
 
 if cancelled:

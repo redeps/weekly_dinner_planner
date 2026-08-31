@@ -7,6 +7,7 @@ import streamlit as st
 
 from database import get_connection
 from models import SEASONALITIES
+from services import photos
 from services.recipes import list_recipes
 
 st.set_page_config(page_title="Recipes — Meal Planner", page_icon="🍽️")
@@ -39,8 +40,11 @@ if not recipes:
 else:
     for recipe in recipes:
         with st.container(border=True):
-            cols = st.columns([3, 1])
+            cols = st.columns([1, 3, 1])
             with cols[0]:
+                if photos.photo_exists(recipe.photo_path):
+                    st.image(str(photos.resolve_photo_path(recipe.photo_path)))
+            with cols[1]:
                 title = recipe.name
                 if recipe.is_quick_fallback:
                     title += " ⚡"
@@ -50,7 +54,7 @@ else:
                     f"{'⭐' * recipe.family_enjoyment} · "
                     f"{recipe.seasonality}"
                 )
-            with cols[1]:
+            with cols[2]:
                 if st.button("View", key=f"view_{recipe.id}"):
                     st.session_state["selected_recipe_id"] = recipe.id
                     st.switch_page("pages/3_Recipe_Detail.py")

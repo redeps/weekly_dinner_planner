@@ -10,7 +10,7 @@ reachable — everything else on this screen works identically either way.
 import streamlit as st
 
 from database import get_connection
-from services import ai_assist
+from services import ai_assist, photos
 from services.ingredients import list_ingredients
 from services.recipes import deactivate_recipe, get_recipe
 
@@ -27,7 +27,14 @@ if not recipe:
         st.switch_page("pages/1_Recipes.py")
     st.stop()
 
+photo_error = st.session_state.pop("photo_error_message", None)
+if photo_error:
+    st.warning(photo_error)
+
 st.title(recipe.name)
+
+if photos.photo_exists(recipe.photo_path):
+    st.image(str(photos.resolve_photo_path(recipe.photo_path)), width=300)
 
 badges = f"{recipe.cook_time_minutes} min · {'⭐' * recipe.family_enjoyment} · {recipe.seasonality}"
 if recipe.is_quick_fallback:
