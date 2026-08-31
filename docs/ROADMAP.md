@@ -86,7 +86,7 @@ proving SQLite is reachable.
 Note: built before Milestone 7 (Cook Mode), which was added to the roadmap
 after this work was already done — see `DECISIONS.md`.
 
-## Milestone 9 — AI Assist (Optional, Local) ⬜
+## Milestone 9 — AI Assist (Optional, Local) ✅
 
 - `services/ai_assist.py` — isolated module calling a local Ollama model;
   app must run fully without it

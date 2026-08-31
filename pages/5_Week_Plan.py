@@ -1,6 +1,10 @@
 """
 Week Plan screen — 7 days, each clickable into its recipe, with a swap
 action per day. See docs/PRODUCT_SPEC.md §15 and §10.
+
+The optional swap-intent hint (AI Assist, docs/AGENT_INSTRUCTIONS.md §6)
+just doesn't appear when Ollama isn't reachable — Swap always works with
+or without it.
 """
 
 import datetime as dt
@@ -9,6 +13,7 @@ import streamlit as st
 
 from database import get_connection
 from models import DAYS_OF_WEEK
+from services import ai_assist
 from services.calendar import build_default_week_calendar
 from services.cook_history import finalize_plan, has_been_cooked, mark_day_cooked
 from services.plan_generation import (
@@ -22,6 +27,8 @@ from services.recipes import get_recipe
 st.set_page_config(page_title="Week Plan — Meal Planner", page_icon="🍽️")
 
 conn = get_connection()
+
+ai_available = ai_assist.is_available()
 
 st.title("Week Plan")
 
@@ -75,7 +82,13 @@ for plan_day in list_plan_days(conn, week_plan.id):
                 st.switch_page("pages/3_Recipe_Detail.py")
             if cols[3].button("Swap", key=f"swap_day_{plan_day.id}"):
                 try:
-                    swap_day_recipe(conn, plan_day.id)
+                    intent = st.session_state.get(f"swap_intent_{plan_day.id}", "").strip()
+                    candidate_filter = None
+                    if ai_available and intent:
+                        candidate_filter = lambda candidates, _i=intent: (
+                            ai_assist.narrow_candidates_by_intent(candidates, _i)
+                        )
+                    swap_day_recipe(conn, plan_day.id, candidate_filter=candidate_filter)
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))
@@ -87,5 +100,12 @@ for plan_day in list_plan_days(conn, week_plan.id):
             elif cols[5].button("Mark Cooked", key=f"mark_cooked_{plan_day.id}"):
                 mark_day_cooked(conn, plan_day.id)
                 st.rerun()
+            if ai_available:
+                st.text_input(
+                    "Swap intent (optional)",
+                    key=f"swap_intent_{plan_day.id}",
+                    placeholder="e.g. vegetarian, quicker, use up broccoli...",
+                    label_visibility="collapsed",
+                )
         else:
             cols[1].write("_No recipe assigned._")

@@ -408,3 +408,57 @@ def test_swap_day_recipe_falls_back_to_same_recipe_when_it_is_the_only_option(co
     )
     result = plan_service.swap_day_recipe(conn, monday.id, rng=random.Random(13))
     assert result.id == only.id
+
+
+def test_swap_day_recipe_applies_candidate_filter(conn):
+    original = make_recipe(conn, name="Original")
+    make_recipe(conn, name="Not Chosen")
+    preferred = make_recipe(conn, name="Preferred")
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(14)
+    )
+    monday = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == "monday"
+    )
+    plan_service.swap_day_recipe(
+        conn, monday.id, rng=random.Random(15),
+        candidate_filter=lambda candidates: [r for r in candidates if r.id == preferred.id],
+    )
+    updated = plan_service.get_plan_day(conn, monday.id)
+    assert updated.recipe_id == preferred.id
+
+
+def test_swap_day_recipe_ignores_a_filter_that_returns_empty(conn):
+    make_recipe(conn, name="A")
+    make_recipe(conn, name="B")
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(16)
+    )
+    monday = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == "monday"
+    )
+    # A filter returning [] must not break the swap — falls back to the
+    # unfiltered candidate list.
+    result = plan_service.swap_day_recipe(
+        conn, monday.id, rng=random.Random(17), candidate_filter=lambda candidates: []
+    )
+    assert result is not None
+
+
+def test_swap_day_recipe_ignores_a_filter_that_raises(conn):
+    make_recipe(conn, name="A")
+    make_recipe(conn, name="B")
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(18)
+    )
+    monday = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == "monday"
+    )
+
+    def broken_filter(candidates):
+        raise RuntimeError("simulated AI assist failure")
+
+    result = plan_service.swap_day_recipe(
+        conn, monday.id, rng=random.Random(19), candidate_filter=broken_filter
+    )
+    assert result is not None

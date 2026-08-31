@@ -139,3 +139,41 @@ Cook Mode (Milestone 7) existed on the roadmap, so it was built out of the
 now-current milestone order. This is flagged here rather than silently
 resolved — the next milestone to pick up, in order, is Milestone 7 (Cook
 Mode).
+
+## 2026-08-31 — AI Assist implementation (Milestone 9)
+
+Implementation choices for `services/ai_assist.py`, per `PRODUCT_SPEC.md`
+§16:
+
+- **Talks to Ollama's HTTP API directly via `urllib` (stdlib), not the
+  `ollama` pip package.** Avoids a new dependency for a handful of simple
+  POST requests, consistent with free-first/keep-it-small. Host
+  (`OLLAMA_HOST`, default `http://localhost:11434`) and model
+  (`AI_ASSIST_MODEL`, default `llama3.2`) are environment-variable
+  overridable, since the model actually pulled varies per machine.
+- **`is_available()` only confirms the Ollama server responds** (hits
+  `/api/tags`), not that the configured model is specifically pulled.
+  Checking the exact model would need parsing the tag list and matching
+  names — a real per-call failure (missing model, bad response) is instead
+  just handled the same way as "unreachable": the function returns `None`
+  and the caller shows nothing, one unified failure path rather than two.
+- **Recipe import fetches a pasted URL itself** (stdlib `urllib`, with a
+  short timeout and a regex-based script/style/tag strip — no HTML-parsing
+  library added) rather than requiring the user to paste already-fetched
+  text. Low risk here: single-user, local-only household tool, not a
+  multi-tenant service; the fetched content is only ever passed into the
+  model prompt, never executed or rendered as HTML.
+- **Swap-intent narrowing stays out of `services/plan_generation.py`
+  entirely**, per `AGENT_INSTRUCTIONS.md` §6 (no core screen/service may
+  depend on AI assist). `swap_day_recipe()` instead grew a generic optional
+  `candidate_filter` hook — a plain callable, with no knowledge of AI
+  assist — that the Week Plan screen supplies only when Ollama is
+  available and an intent hint was entered. An empty/failed filter result
+  is ignored and the unfiltered candidate list is used, so a bad or
+  unavailable filter can never break a swap.
+- **Every `ai_assist` function returns `None` (or an empty/unfiltered
+  result) rather than raising**, whether the cause is an unreachable
+  server, a missing model, a timeout, or a response that doesn't parse as
+  expected — one graceful-degradation contract for every caller, verified
+  in this environment (no Ollama installed) as real behavior, not just
+  mocked.

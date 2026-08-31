@@ -1,11 +1,16 @@
 """
 Recipe Detail screen — full recipe view, edit and deactivate actions. See
-docs/PRODUCT_SPEC.md §15. Swap (Milestone 5) is not part of this screen yet.
+docs/PRODUCT_SPEC.md §15.
+
+The optional "Suggest Shortcuts" action (AI Assist,
+docs/AGENT_INSTRUCTIONS.md §6) just doesn't appear when Ollama isn't
+reachable — everything else on this screen works identically either way.
 """
 
 import streamlit as st
 
 from database import get_connection
+from services import ai_assist
 from services.ingredients import list_ingredients
 from services.recipes import deactivate_recipe, get_recipe
 
@@ -57,6 +62,17 @@ st.write(recipe.instructions or "_No instructions yet._")
 
 st.subheader("Notes")
 st.write(recipe.notes or "_No notes._")
+
+if ai_assist.is_available():
+    if st.button("🤖 Suggest Shortcuts"):
+        st.session_state["shortcut_suggestion"] = ai_assist.suggest_shortcuts(recipe)
+        st.session_state["shortcut_suggestion_for"] = recipe.id
+    if st.session_state.get("shortcut_suggestion_for") == recipe.id:
+        suggestion = st.session_state["shortcut_suggestion"]
+        if suggestion:
+            st.info(suggestion)
+        else:
+            st.caption("No shortcut suggestions right now.")
 
 col1, col2, col3 = st.columns(3)
 with col1:

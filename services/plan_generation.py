@@ -14,7 +14,7 @@ docs/DECISIONS.md.
 import datetime as dt
 import random
 import sqlite3
-from typing import Optional
+from typing import Callable, Optional
 
 from models import DAYS_OF_WEEK, CalendarDay, PlanDay, Recipe, WeekPlan
 from services.recipes import list_recipes
@@ -225,11 +225,23 @@ def get_plan_day(conn: sqlite3.Connection, plan_day_id: int) -> Optional[PlanDay
 
 
 def swap_day_recipe(
-    conn: sqlite3.Connection, plan_day_id: int, *, rng: Optional[random.Random] = None
+    conn: sqlite3.Connection,
+    plan_day_id: int,
+    *,
+    rng: Optional[random.Random] = None,
+    candidate_filter: Optional[Callable[[list[Recipe]], Optional[list[Recipe]]]] = None,
 ) -> Recipe:
     """Replace a single day's recipe, excluding the one being swapped out,
     using the same scoring as plan generation. Only this day's `plan_days`
     row changes — the rest of the week is untouched (see docs/DATA_MODEL.md).
+
+    `candidate_filter`, if given, is applied to the candidate list before
+    scoring — e.g. AI Assist's swap-intent narrowing (see
+    services/ai_assist.py). This function has no knowledge of what the
+    filter is or does; a filter that raises, or returns something falsy,
+    is simply ignored and the unfiltered candidates are used, so a broken
+    or unavailable filter can never break a swap (docs/AGENT_INSTRUCTIONS.md
+    §6 — no core service may depend on AI assist being available).
     """
     rng = rng or random.Random()
     plan_day = get_plan_day(conn, plan_day_id)
@@ -241,6 +253,13 @@ def swap_day_recipe(
         raise ValueError("No active recipes to swap in.")
 
     candidates = [r for r in recipes if r.id != plan_day.recipe_id] or recipes
+    if candidate_filter is not None:
+        try:
+            filtered = candidate_filter(candidates)
+        except Exception:
+            filtered = None
+        if filtered:
+            candidates = filtered
     season = current_season(dt.date.fromisoformat(plan_day.date))
     last_cooked_by_recipe = last_cooked_dates(conn)
 
