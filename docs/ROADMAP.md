@@ -36,7 +36,7 @@ proving SQLite is reachable.
 - Add/Edit Recipe form gains a repeatable ingredient-rows section
 - Recipe Detail displays ingredients
 
-## Milestone 3 — Weekly Calendar Input ⬜
+## Milestone 3 — Weekly Calendar Input ✅
 
 - 7-day calendar input screen: busy toggle + dinner-ready time per day
   (default 6:00 PM, overridable)

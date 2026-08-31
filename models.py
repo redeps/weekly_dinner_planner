@@ -6,12 +6,23 @@ docs/DATA_MODEL.md for the full schema and docs/ROADMAP.md for what belongs
 in later milestones (ingredients, plans, history, photos).
 """
 
+import datetime as dt
 import sqlite3
 from dataclasses import dataclass
 from typing import Optional
 
 SEASONALITIES = ("winter", "spring", "summer", "fall", "all-season")
 STORE_CATEGORIES = ("produce", "dairy", "meat", "pantry", "frozen", "other")
+DAYS_OF_WEEK = (
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+)
+DEFAULT_DINNER_READY_TIME = dt.time(18, 0)
 
 
 @dataclass
@@ -39,6 +50,16 @@ class Ingredient:
     quantity: Optional[float]
     unit: Optional[str]
     store_category: str
+
+
+@dataclass
+class CalendarDay:
+    """A single day's plan-generation input. Not database-backed yet — see
+    docs/DECISIONS.md — Milestone 4 carries these into `plan_days`."""
+
+    day_of_week: str
+    is_busy: bool
+    dinner_ready_time: dt.time
 
 
 def create_recipes_table(conn: sqlite3.Connection) -> None:

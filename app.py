@@ -34,6 +34,9 @@ def main() -> None:
     if st.button("Browse Recipes →"):
         st.switch_page("pages/1_Recipes.py")
 
+    if st.button("Weekly Calendar →"):
+        st.switch_page("pages/4_Weekly_Calendar.py")
+
 
 if __name__ == "__main__":
     main()

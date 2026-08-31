@@ -66,3 +66,14 @@ submits its full current row list, so this keeps the save path simple and
 avoids tracking per-row database ids in the UI layer. Acceptable given
 recipes have realistically small ingredient counts (a handful to a couple
 dozen rows).
+
+## 2026-08-31 — Weekly calendar input is re-entered, not persisted, in Milestone 3
+
+The 7-day calendar (busy toggle + dinner-ready time per day) lives only in
+Streamlit `session_state` for now, not in a database table. `DATA_MODEL.md`
+assigns `is_busy`/`dinner_ready_time` to the `plan_days` table, which
+`DATA_MODEL.md` explicitly scopes to Milestone 4 (created alongside
+`week_plans` when a plan is generated) — creating that table now would mean
+starting Milestone 4's schema early, which `AGENT_INSTRUCTIONS.md` rules
+out. The user re-enters the week's calendar each time before generating a
+plan; Milestone 4 will carry these values into `plan_days` at that point.
