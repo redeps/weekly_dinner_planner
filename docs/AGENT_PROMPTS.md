@@ -86,10 +86,22 @@ docs/DECISIONS.md, no check-off state or shopping-mode UI is needed. Add
 tests for the aggregation logic.
 ```
 
-## Milestone 7 — Cook History
+## Milestone 7 — Cook Mode
 
 ```
-Implement Milestone 7 from docs/ROADMAP.md: the `cook_history` table and a
+Implement Milestone 7 from docs/ROADMAP.md: a "Start Cooking" action on
+Recipe Detail / Day view that opens a large-font, step-by-step Cook Mode.
+Per docs/DATA_MODEL.md, derive steps by splitting the existing
+recipes.instructions text at render time — no new schema. Include
+next/back navigation with a "Step X of Y" indicator, and show the
+ingredient list for reference without leaving the view. Cook Mode is
+read-only. Add tests for the step-splitting logic.
+```
+
+## Milestone 8 — Cook History
+
+```
+Implement Milestone 8 from docs/ROADMAP.md: the `cook_history` table and a
 finalize_plan()/mark_day_cooked() service function that writes it — per
 docs/AGENT_INSTRUCTIONS.md §4, this must never happen as a side effect of
 rendering. Add a simple "what have we cooked lately" view. Add tests
@@ -97,10 +109,10 @@ including a check that re-rendering the page does not create duplicate
 history rows.
 ```
 
-## Milestone 8 — AI Assist (Optional, Local)
+## Milestone 9 — AI Assist (Optional, Local)
 
 ```
-Implement Milestone 8 from docs/ROADMAP.md: an isolated services/ai_assist.py
+Implement Milestone 9 from docs/ROADMAP.md: an isolated services/ai_assist.py
 module calling a local Ollama model, covering recipe import (paste
 text/URL → pre-filled Add Recipe draft, always reviewed before saving),
 ingredient store_category suggestions, swap suggestions with a free-text
@@ -111,28 +123,28 @@ Add tests that mock the model call and verify graceful degradation when
 it's unreachable.
 ```
 
-## Milestone 9 — Photos
+## Milestone 10 — Photos
 
 ```
-Implement Milestone 9 from docs/ROADMAP.md: photo upload on the Add/Edit
+Implement Milestone 10 from docs/ROADMAP.md: photo upload on the Add/Edit
 Recipe form, resize/compress on save, store under photos/ named by the
-recipe's stable ID, display on recipe cards and detail/day views, and
-replace/delete. Confirm photos/ stays gitignored.
+recipe's stable ID, display on recipe cards and detail/day/Cook Mode views,
+and replace/delete. Confirm photos/ stays gitignored.
 ```
 
-## Milestone 10 — Polish
+## Milestone 11 — Polish
 
 ```
-Implement Milestone 10 from docs/ROADMAP.md: mobile UX pass, empty states,
+Implement Milestone 11 from docs/ROADMAP.md: mobile UX pass, empty states,
 confirmation dialogs for destructive actions, a basic accessibility pass,
 expanded test coverage, and a backup/export option (e.g. download the
 SQLite file).
 ```
 
-## Milestone 11 — Hosted Version
+## Milestone 12 — Hosted Version
 
 ```
-Do not run this prompt until Milestones 0–10 are stable and you've decided
+Do not run this prompt until Milestones 0–11 are stable and you've decided
 to move off the local prototype. When ready: propose a hosted architecture
 (managed Postgres, hosted photo storage, auth, migration path from SQLite,
 backups, deployment) as a plan first, get it reviewed, record the decision

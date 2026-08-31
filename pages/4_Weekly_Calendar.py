@@ -1,6 +1,6 @@
 """
 Weekly Calendar Input screen — a 7-day busy toggle + dinner-ready time
-form. See docs/PRODUCT_SPEC.md §7 and §14.
+form. See docs/PRODUCT_SPEC.md §7 and §15.
 
 Not database-backed: the calendar is re-entered each time rather than
 persisted per week — see docs/DECISIONS.md. Milestone 4 will carry these

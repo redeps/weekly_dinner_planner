@@ -1,5 +1,5 @@
 """
-Milestone 7: verifies, against the actual Week Plan page, that
+Milestone 8: verifies, against the actual Week Plan page, that
 re-rendering never creates duplicate cook_history rows — the specific
 failure mode docs/AGENT_INSTRUCTIONS.md §4 warns about (Streamlit reruns
 the whole script on every interaction, so a history write in rendering

@@ -171,10 +171,10 @@ def create_plan_days_table(conn: sqlite3.Connection) -> None:
 def create_cook_history_table(conn: sqlite3.Connection) -> None:
     """Create the `cook_history` table if it doesn't already exist.
 
-    Schema created here in Milestone 4 (ahead of Milestone 7's nominal
+    Schema created here in Milestone 4 (ahead of Milestone 8's nominal
     scope in docs/DATA_MODEL.md) because rotation-avoidance scoring needs
     to read `last_cooked_at` from it. The write path — a `finalize_plan()`
-    / `mark_day_cooked()` service function — stays Milestone 7 work; see
+    / `mark_day_cooked()` service function — stays Milestone 8 work; see
     docs/DECISIONS.md.
     """
     conn.execute(

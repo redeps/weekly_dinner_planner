@@ -1,6 +1,6 @@
 """
 Week Plan screen — 7 days, each clickable into its recipe, with a swap
-action per day. See docs/PRODUCT_SPEC.md §14 and §10.
+action per day. See docs/PRODUCT_SPEC.md §15 and §10.
 """
 
 import datetime as dt

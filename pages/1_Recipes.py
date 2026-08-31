@@ -1,6 +1,6 @@
 """
 Recipes browsing screen — search, filter by season / quick-fallback, and
-browse recipe cards. See docs/PRODUCT_SPEC.md §14.
+browse recipe cards. See docs/PRODUCT_SPEC.md §15.
 """
 
 import streamlit as st

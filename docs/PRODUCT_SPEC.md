@@ -197,7 +197,27 @@ all seven days' recipes (summing quantities where units match).
   "shopping mode." The user transcribes it to a handwritten list. Keep this
   screen simple: a clean, printable/readable list, nothing more.
 
-## 12. History
+## 12. Cook Mode
+
+A distraction-free, large-font view of a single recipe's instructions,
+meant to be read at a glance from across the kitchen while actually
+cooking — not for browsing or editing.
+
+- opened from Recipe Detail or a Day view via a "Start Cooking" action
+- large, high-contrast text; minimal chrome (no sidebar/nav clutter)
+- steps are derived from the recipe's existing `instructions` text (split
+  into steps, e.g. by line) — no new structured "steps" data is introduced
+  for this; see `docs/DATA_MODEL.md`
+- step-by-step navigation (next/back) with a simple progress indicator
+  (e.g. "Step 3 of 6"), plus the ingredient list available for reference
+  without leaving the view
+- read-only: Cook Mode never edits the recipe. Any correction happens via
+  the normal Edit Recipe form afterward
+- out of scope: voice control, timers, screen-wake-lock (not reliably
+  controllable from Streamlit), and step-level ingredient linking — these
+  can be reconsidered later if actually needed, not built speculatively
+
+## 13. History
 
 Each time a plan is finalized (or a day is confirmed as cooked), the app
 records which recipe was cooked on which date. This powers the rotation
@@ -210,7 +230,7 @@ the UI. Streamlit reruns the whole script on every interaction; rendering
 code must never itself write a history record, or a single user action can
 produce duplicate rows. See `docs/AGENT_INSTRUCTIONS.md`.
 
-## 13. Photos
+## 14. Photos
 
 Every recipe may have one photo.
 
@@ -223,7 +243,7 @@ Every recipe may have one photo.
 
 Never commit household photos to GitHub.
 
-## 14. Main User Interface
+## 15. Main User Interface
 
 Target screens (built incrementally across milestones — not all exist yet):
 
@@ -253,12 +273,14 @@ only.
 action.
 
 **Day/Recipe Detail** — photo, name, cook time, enjoyment, seasonality,
-ingredients, instructions, notes, swap action.
+ingredients, instructions, notes, swap action, "Start Cooking" action (§12).
+
+**Cook Mode** — large-font, step-by-step instructions view, per §12.
 
 **Grocery List** — generated, grouped-by-category, read-only view for the
 current week plan.
 
-## 15. AI Assist (Optional, Local)
+## 16. AI Assist (Optional, Local)
 
 The app may optionally integrate a locally-run model (e.g. via Ollama) for a
 small set of assistive features. This integration must be **optional and
@@ -293,27 +315,27 @@ Architecture: implemented as a separate, isolated service module (see
 screen (recipes, plan generation, grocery list) depends on this module being
 available.
 
-## 16. Database Model
+## 17. Database Model
 
 Relational SQLite design. See `docs/DATA_MODEL.md` for full column-level
 detail. Conceptual tables: `RECIPES`, `RECIPE_INGREDIENTS`, `WEEK_PLANS`,
 `PLAN_DAYS`, `COOK_HISTORY`. Exact implementation (column types, indexes)
 may vary, but these concepts and their separation of concerns must remain.
 
-## 17. Roadmap
+## 18. Roadmap
 
 See `docs/ROADMAP.md` for the full milestone breakdown (Milestone 0 through
-Milestone 11). Work proceeds one milestone at a time — see
+Milestone 12). Work proceeds one milestone at a time — see
 `docs/AGENT_INSTRUCTIONS.md`.
 
-## 18–19. Agent Rules and Prompts
+## 19–20. Agent Rules and Prompts
 
 See `docs/AGENT_INSTRUCTIONS.md` and `docs/AGENT_PROMPTS.md`.
 
-## 20. Setup
+## 21. Setup
 
 See `docs/SETUP.md`.
 
-## 21. Decisions
+## 22. Decisions
 
 See `docs/DECISIONS.md` for the architecture decision log.

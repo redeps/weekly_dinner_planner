@@ -1,5 +1,5 @@
 """
-Milestone 7 tests: cook history service functions
+Milestone 8 tests: cook history service functions
 (services/cook_history.py).
 """
 

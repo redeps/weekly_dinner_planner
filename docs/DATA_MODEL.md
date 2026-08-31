@@ -89,6 +89,15 @@ Append-only. Populated only by business-logic operations (e.g.
 `PRODUCT_SPEC.md` §9) is derived as `MAX(cooked_on)` from this table per
 `recipe_id` — it does not need its own column on `recipes`.
 
+## Cook Mode
+
+No new tables or columns. Cook Mode (see `PRODUCT_SPEC.md` §12) reads the
+existing `recipes.instructions` and `recipe_ingredients` rows and splits
+`instructions` into display steps at render time (e.g. by line) — it is a
+presentation-only feature, not a new data structure. If a future need
+arises for structured, individually-orderable steps, that would be a new
+decision and a new table — do not add one speculatively now.
+
 ## AI Assist (Optional)
 
 No new persistent tables are required for this. The AI-assist module (see

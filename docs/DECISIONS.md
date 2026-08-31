@@ -48,8 +48,16 @@ paid API) and consistent with local-first architecture. The integration is
 optional and isolated in its own service module — no core screen depends on
 it being available, and imported/suggested content is always
 reviewed/confirmed by the user before being saved, never written
-automatically. Scheduled for Milestone 8, after the core plan/grocery flow
+automatically. Scheduled for Milestone 9, after the core plan/grocery flow
 is working.
+
+## 2026-08-31 — Cook Mode reuses existing instructions text
+
+Rather than introducing a structured "steps" table, Cook Mode (large-font,
+step-by-step view for use while actively cooking) derives its steps by
+splitting the existing `recipes.instructions` text at render time. Keeps
+the schema unchanged; can be revisited later if a real need for
+individually-orderable, richer steps emerges.
 
 ## 2026-08-31 — Free-first
 
@@ -88,14 +96,16 @@ Several implementation choices for the scoring generator in
   normally. Chosen as the roadmap's own suggested default — no usage data
   yet to tune it further; revisit if 21 days feels too short/long once the
   app sees real use.
-- **`cook_history` table created now, in Milestone 4, not Milestone 7.**
-  `DATA_MODEL.md` nominally scopes `cook_history` to Milestone 7, but
-  rotation avoidance (this milestone, requested explicitly) needs to read
-  `last_cooked_at` from it. Resolution: the table's *schema* is created now
-  so the scoring logic can query it (empty table = no recipe is
-  rotation-penalized, a safe default); the *write path*
-  (`finalize_plan()` / `mark_day_cooked()`, and the "what have we cooked
-  lately" view) stays Milestone 7 work, per `AGENT_INSTRUCTIONS.md` §4 —
+- **`cook_history` table created now, in Milestone 4, not the Cook History
+  milestone (then numbered Milestone 7, since renumbered to Milestone 8 —
+  see below).** `DATA_MODEL.md` nominally scopes `cook_history` to that
+  later milestone, but rotation avoidance (this milestone, requested
+  explicitly) needs to read `last_cooked_at` from it. Resolution: the
+  table's *schema* is created now so the scoring logic can query it (empty
+  table = no recipe is rotation-penalized, a safe default); the *write
+  path* (`finalize_plan()` / `mark_day_cooked()`, and the "what have we
+  cooked lately" view) stays a later milestone's work, per
+  `AGENT_INSTRUCTIONS.md` §4 —
   history rows still only get written by an explicit business-logic
   action, never by rendering.
 - **Current season is derived from the plan's `week_start_date` month**,
@@ -111,3 +121,21 @@ Several implementation choices for the scoring generator in
   repeat only if the active recipe pool is smaller than 7). This is
   separate from the cross-week rotation window above, which is about
   avoiding recent repeats *between* weeks.
+
+## 2026-08-31 — Roadmap renumbered to insert Cook Mode; Cook History built out of order
+
+`docs/ROADMAP.md`, `docs/PRODUCT_SPEC.md`, `docs/DATA_MODEL.md`, and
+`docs/AGENT_PROMPTS.md` were updated to add a new Cook Mode milestone
+(large-font, step-by-step cooking view — see the entry above) as Milestone
+7, shifting every milestone after it (old Milestone 7 Cook History onward)
+up by one. These updates were uploaded to the repository root instead of
+`docs/` and arrived as a separate commit that had diverged from this
+branch's history; reconciling the two required merging them in rather than
+a plain file overwrite, to avoid losing the ✅ progress markers and the
+Milestone 2–4 decision entries above, which the uploaded snapshot predated.
+
+Net effect: Cook History (now Milestone 8) was already implemented before
+Cook Mode (Milestone 7) existed on the roadmap, so it was built out of the
+now-current milestone order. This is flagged here rather than silently
+resolved — the next milestone to pick up, in order, is Milestone 7 (Cook
+Mode).

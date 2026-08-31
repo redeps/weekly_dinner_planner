@@ -1,6 +1,6 @@
 """
 Cook History screen — a simple "what have we cooked lately" view. See
-docs/PRODUCT_SPEC.md §12. Read-only: history rows are only ever written by
+docs/PRODUCT_SPEC.md §13. Read-only: history rows are only ever written by
 Week Plan's Mark Cooked / Finalize Plan actions, never by this page.
 """
 

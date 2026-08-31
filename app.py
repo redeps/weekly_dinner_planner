@@ -1,7 +1,7 @@
 """
 Meal Planner — Streamlit entry point (Home screen).
 
-The full plan-at-a-glance view described in docs/PRODUCT_SPEC.md §14
+The full plan-at-a-glance view described in docs/PRODUCT_SPEC.md §15
 (7 days, one line each) isn't built yet — no roadmap milestone has
 explicitly called for it on Home so far. For now Home just confirms the
 app is alive and links into the other screens.
@@ -17,7 +17,7 @@ st.set_page_config(page_title="Meal Planner", page_icon="🍽️")
 
 def main() -> None:
     st.title("🍽️ Meal Planner")
-    st.caption("Milestone 7 — Cook History")
+    st.caption("Milestone 8 — Cook History")
 
     try:
         conn = get_connection()

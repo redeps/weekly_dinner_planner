@@ -1,6 +1,6 @@
 """
 Recipe Detail screen — full recipe view, edit and deactivate actions. See
-docs/PRODUCT_SPEC.md §14. Swap (Milestone 5) is not part of this screen yet.
+docs/PRODUCT_SPEC.md §15. Swap (Milestone 5) is not part of this screen yet.
 """
 
 import streamlit as st

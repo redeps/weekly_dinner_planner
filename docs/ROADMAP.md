@@ -67,14 +67,26 @@ proving SQLite is reachable.
 - grouped-by-store-category read-only list view
 - regenerates automatically when a day is swapped
 
-## Milestone 7 — Cook History ✅
+## Milestone 7 — Cook Mode ⬜
+
+- "Start Cooking" action on Recipe Detail / Day view
+- large-font, step-by-step instructions view (steps derived from the
+  existing `instructions` text — no new schema)
+- next/back navigation with a simple progress indicator ("Step X of Y")
+- ingredients visible for reference without leaving the view
+- read-only — no editing from within Cook Mode
+
+## Milestone 8 — Cook History ✅
 
 - `cook_history` table populated by a `finalize_plan()` / `mark_day_cooked()`
   service function (never by UI rendering — see `AGENT_INSTRUCTIONS.md`)
 - simple "what have we cooked lately" view
 - feeds the rotation weighting from Milestone 4
 
-## Milestone 8 — AI Assist (Optional, Local) ⬜
+Note: built before Milestone 7 (Cook Mode), which was added to the roadmap
+after this work was already done — see `DECISIONS.md`.
+
+## Milestone 9 — AI Assist (Optional, Local) ⬜
 
 - `services/ai_assist.py` — isolated module calling a local Ollama model;
   app must run fully without it
@@ -90,15 +102,15 @@ proving SQLite is reachable.
 - graceful degradation if the local model isn't running (feature hidden or
   disabled, no errors surfaced to the core flow)
 
-## Milestone 9 — Photos ⬜
+## Milestone 10 — Photos ⬜
 
 - upload a photo when adding/editing a recipe
 - resize/compress on save
 - store file under `photos/`, named by stable recipe ID
-- display photo on recipe cards and detail/day view
+- display photo on recipe cards and detail/day/Cook Mode views
 - replace / delete photo
 
-## Milestone 10 — Polish ⬜
+## Milestone 11 — Polish ⬜
 
 - mobile UX pass
 - empty states (no recipes yet, no plan generated yet, etc.)
@@ -107,7 +119,7 @@ proving SQLite is reachable.
 - expand automated test coverage
 - backup/export (e.g. download the SQLite file)
 
-## Milestone 11 — Hosted Version ⬜ (only after Milestones 0–10 are stable)
+## Milestone 12 — Hosted Version ⬜ (only after Milestones 0–11 are stable)
 
 - hosted database (e.g. managed Postgres)
 - hosted photo storage
