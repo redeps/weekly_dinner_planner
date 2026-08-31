@@ -77,3 +77,37 @@ assigns `is_busy`/`dinner_ready_time` to the `plan_days` table, which
 starting Milestone 4's schema early, which `AGENT_INSTRUCTIONS.md` rules
 out. The user re-enters the week's calendar each time before generating a
 plan; Milestone 4 will carry these values into `plan_days` at that point.
+
+## 2026-08-31 — Plan generation design (Milestone 4)
+
+Several implementation choices for the scoring generator in
+`services/plan_generation.py`, per `PRODUCT_SPEC.md` §9:
+
+- **Rotation window: 3 weeks (21 days).** A recipe last cooked within 21
+  days of today gets a rotation penalty; outside that window it's scored
+  normally. Chosen as the roadmap's own suggested default — no usage data
+  yet to tune it further; revisit if 21 days feels too short/long once the
+  app sees real use.
+- **`cook_history` table created now, in Milestone 4, not Milestone 7.**
+  `DATA_MODEL.md` nominally scopes `cook_history` to Milestone 7, but
+  rotation avoidance (this milestone, requested explicitly) needs to read
+  `last_cooked_at` from it. Resolution: the table's *schema* is created now
+  so the scoring logic can query it (empty table = no recipe is
+  rotation-penalized, a safe default); the *write path*
+  (`finalize_plan()` / `mark_day_cooked()`, and the "what have we cooked
+  lately" view) stays Milestone 7 work, per `AGENT_INSTRUCTIONS.md` §4 —
+  history rows still only get written by an explicit business-logic
+  action, never by rendering.
+- **Current season is derived from the plan's `week_start_date` month**,
+  Northern-hemisphere mapping (Dec–Feb winter, Mar–May spring, Jun–Aug
+  summer, Sep–Nov fall). Not configurable yet; revisit if the household
+  using this is in the Southern Hemisphere.
+- **Busy-day preference uses `is_busy` only, not "tight" `dinner_ready_time`.**
+  `dinner_ready_time` is stored per day but nothing in the data model
+  captures when cooking *starts*, so "tight" can't be computed from what we
+  have. Only `is_busy` drives the busy-day cook-time preference for now.
+- **No repeated recipe within the same generated week**, when enough
+  distinct active recipes exist to avoid it (falls back to allowing a
+  repeat only if the active recipe pool is smaller than 7). This is
+  separate from the cross-week rotation window above, which is about
+  avoiding recent repeats *between* weeks.

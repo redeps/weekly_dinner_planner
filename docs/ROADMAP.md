@@ -43,7 +43,7 @@ proving SQLite is reachable.
 - persisted per week (or re-entered each time — decide and record in
   `DECISIONS.md`)
 
-## Milestone 4 — Plan Generation ⬜
+## Milestone 4 — Plan Generation ✅
 
 - `week_plans` + `plan_days` tables
 - generation algorithm: weighted by seasonality, rotation (via

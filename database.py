@@ -22,4 +22,7 @@ def get_connection() -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     models.create_recipes_table(conn)
     models.create_recipe_ingredients_table(conn)
+    models.create_week_plans_table(conn)
+    models.create_plan_days_table(conn)
+    models.create_cook_history_table(conn)
     return conn

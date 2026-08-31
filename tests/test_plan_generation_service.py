@@ -1,0 +1,311 @@
+"""
+Milestone 4 tests: plan generation scoring and generation
+(services/plan_generation.py).
+"""
+
+import datetime as dt
+import random
+import sqlite3
+
+import pytest
+
+import models
+from models import CalendarDay
+from services import plan_generation as plan_service
+from services import recipes as recipe_service
+
+
+@pytest.fixture
+def conn():
+    connection = sqlite3.connect(":memory:")
+    connection.execute("PRAGMA foreign_keys = ON")
+    models.create_recipes_table(connection)
+    models.create_recipe_ingredients_table(connection)
+    models.create_week_plans_table(connection)
+    models.create_plan_days_table(connection)
+    models.create_cook_history_table(connection)
+    yield connection
+    connection.close()
+
+
+def make_recipe(conn, **overrides):
+    fields = dict(
+        name="Test Recipe",
+        cook_time_minutes=30,
+        family_enjoyment=3,
+        seasonality="all-season",
+        servings=4,
+    )
+    fields.update(overrides)
+    recipe_id = recipe_service.create_recipe(conn, **fields)
+    return recipe_service.get_recipe(conn, recipe_id)
+
+
+def default_calendar(*, busy_days=()):
+    return [
+        CalendarDay(
+            day_of_week=day,
+            is_busy=day in busy_days,
+            dinner_ready_time=dt.time(18, 0),
+        )
+        for day in models.DAYS_OF_WEEK
+    ]
+
+
+# --- current_season ---
+
+
+@pytest.mark.parametrize(
+    "month,expected",
+    [
+        (12, "winter"), (1, "winter"), (2, "winter"),
+        (3, "spring"), (4, "spring"), (5, "spring"),
+        (6, "summer"), (7, "summer"), (8, "summer"),
+        (9, "fall"), (10, "fall"), (11, "fall"),
+    ],
+)
+def test_current_season_maps_month_to_season(month, expected):
+    assert plan_service.current_season(dt.date(2026, month, 15)) == expected
+
+
+# --- last_cooked_dates ---
+
+
+def test_last_cooked_dates_empty_table(conn):
+    assert plan_service.last_cooked_dates(conn) == {}
+
+
+def test_last_cooked_dates_returns_max_per_recipe(conn):
+    recipe = make_recipe(conn)
+    conn.execute(
+        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (?, ?)",
+        (recipe.id, "2026-08-01"),
+    )
+    conn.execute(
+        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (?, ?)",
+        (recipe.id, "2026-08-20"),
+    )
+    conn.commit()
+    result = plan_service.last_cooked_dates(conn)
+    assert result[recipe.id] == dt.date(2026, 8, 20)
+
+
+def test_last_cooked_dates_omits_recipes_never_cooked(conn):
+    recipe = make_recipe(conn)
+    assert recipe.id not in plan_service.last_cooked_dates(conn)
+
+
+# --- score_recipe: seasonality ---
+
+
+def test_score_recipe_prefers_seasonal_match_over_all_season(conn):
+    today = dt.date(2026, 1, 15)
+    seasonal = make_recipe(conn, seasonality="winter")
+    all_season = make_recipe(conn, seasonality="all-season")
+    kwargs = dict(season="winter", is_busy=False, last_cooked=None, today=today)
+    assert plan_service.score_recipe(seasonal, **kwargs) > plan_service.score_recipe(
+        all_season, **kwargs
+    )
+
+
+def test_score_recipe_prefers_all_season_over_off_season(conn):
+    today = dt.date(2026, 1, 15)
+    all_season = make_recipe(conn, seasonality="all-season")
+    off_season = make_recipe(conn, seasonality="summer")
+    kwargs = dict(season="winter", is_busy=False, last_cooked=None, today=today)
+    assert plan_service.score_recipe(all_season, **kwargs) > plan_service.score_recipe(
+        off_season, **kwargs
+    )
+
+
+# --- score_recipe: rotation ---
+
+
+def test_score_recipe_penalizes_recently_cooked_within_window(conn):
+    recipe = make_recipe(conn)
+    today = dt.date(2026, 8, 31)
+    recently_cooked = today - dt.timedelta(days=5)
+    never_cooked_score = plan_service.score_recipe(
+        recipe, season="all-season", is_busy=False, last_cooked=None, today=today
+    )
+    recent_score = plan_service.score_recipe(
+        recipe, season="all-season", is_busy=False, last_cooked=recently_cooked, today=today
+    )
+    assert recent_score < never_cooked_score
+
+
+def test_score_recipe_does_not_penalize_outside_rotation_window(conn):
+    recipe = make_recipe(conn)
+    today = dt.date(2026, 8, 31)
+    long_ago = today - dt.timedelta(days=plan_service.ROTATION_WINDOW_DAYS + 1)
+    never_cooked_score = plan_service.score_recipe(
+        recipe, season="all-season", is_busy=False, last_cooked=None, today=today
+    )
+    old_score = plan_service.score_recipe(
+        recipe, season="all-season", is_busy=False, last_cooked=long_ago, today=today
+    )
+    assert old_score == never_cooked_score
+
+
+# --- score_recipe: busy day / cook time ---
+
+
+def test_score_recipe_prefers_quick_recipe_on_busy_day(conn):
+    today = dt.date(2026, 8, 31)
+    quick = make_recipe(conn, cook_time_minutes=10)
+    slow = make_recipe(conn, cook_time_minutes=60)
+    kwargs = dict(season="all-season", last_cooked=None, today=today)
+    assert plan_service.score_recipe(
+        quick, is_busy=True, **kwargs
+    ) > plan_service.score_recipe(slow, is_busy=True, **kwargs)
+
+
+def test_score_recipe_cook_time_irrelevant_on_non_busy_day(conn):
+    today = dt.date(2026, 8, 31)
+    quick = make_recipe(conn, cook_time_minutes=10)
+    slow = make_recipe(conn, cook_time_minutes=60)
+    kwargs = dict(season="all-season", last_cooked=None, today=today, is_busy=False)
+    assert plan_service.score_recipe(quick, **kwargs) == plan_service.score_recipe(
+        slow, **kwargs
+    )
+
+
+# --- score_recipe: enjoyment tie-breaker ---
+
+
+def test_score_recipe_increases_monotonically_with_enjoyment(conn):
+    today = dt.date(2026, 8, 31)
+    scores = [
+        plan_service.score_recipe(
+            make_recipe(conn, family_enjoyment=stars),
+            season="all-season",
+            is_busy=False,
+            last_cooked=None,
+            today=today,
+        )
+        for stars in (1, 2, 3, 4, 5)
+    ]
+    assert scores == sorted(scores)
+    assert scores[0] < scores[-1]
+
+
+# --- choose_recipe ---
+
+
+def test_choose_recipe_favors_higher_weighted_candidate_across_trials(conn):
+    today = dt.date(2026, 1, 15)
+    favored = make_recipe(conn, name="Favored", seasonality="winter", family_enjoyment=5)
+    disfavored = make_recipe(
+        conn, name="Disfavored", seasonality="summer", family_enjoyment=1
+    )
+    rng = random.Random(0)
+    picks = [
+        plan_service.choose_recipe(
+            [favored, disfavored],
+            season="winter",
+            is_busy=False,
+            last_cooked_by_recipe={},
+            today=today,
+            rng=rng,
+        )
+        for _ in range(200)
+    ]
+    favored_count = sum(1 for p in picks if p.id == favored.id)
+    assert favored_count > 150  # heavily favored by weight; not a guaranteed argmax
+
+
+def test_choose_recipe_returns_the_only_candidate(conn):
+    only = make_recipe(conn)
+    rng = random.Random(0)
+    result = plan_service.choose_recipe(
+        [only],
+        season="all-season",
+        is_busy=False,
+        last_cooked_by_recipe={},
+        today=dt.date(2026, 8, 31),
+        rng=rng,
+    )
+    assert result.id == only.id
+
+
+# --- generate_week_plan ---
+
+
+def test_generate_week_plan_raises_with_no_recipes(conn):
+    with pytest.raises(ValueError):
+        plan_service.generate_week_plan(
+            conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar()
+        )
+
+
+def test_generate_week_plan_creates_seven_days_in_order(conn):
+    for i in range(3):
+        make_recipe(conn, name=f"Recipe {i}")
+    week_start = dt.date(2026, 8, 31)  # a Monday
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=week_start, calendar=default_calendar(), rng=random.Random(1)
+    )
+    days = plan_service.list_plan_days(conn, week_plan_id)
+    assert len(days) == 7
+    assert [d.day_of_week for d in days] == list(models.DAYS_OF_WEEK)
+    assert [d.date for d in days] == [
+        (week_start + dt.timedelta(days=i)).isoformat() for i in range(7)
+    ]
+    assert all(d.recipe_id is not None for d in days)
+
+
+def test_generate_week_plan_carries_calendar_input_per_day(conn):
+    make_recipe(conn)
+    calendar = default_calendar(busy_days={"wednesday"})
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["wednesday"].dinner_ready_time = dt.time(17, 0)
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(2)
+    )
+    days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+    assert days["wednesday"].is_busy is True
+    assert days["wednesday"].dinner_ready_time == "17:00"
+    assert days["monday"].is_busy is False
+    assert days["monday"].dinner_ready_time == "18:00"
+
+
+def test_generate_week_plan_avoids_repeats_when_enough_recipes(conn):
+    for i in range(7):
+        make_recipe(conn, name=f"Recipe {i}")
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(3)
+    )
+    days = plan_service.list_plan_days(conn, week_plan_id)
+    assert len({d.recipe_id for d in days}) == 7
+
+
+def test_generate_week_plan_allows_repeats_when_recipe_pool_too_small(conn):
+    make_recipe(conn, name="Only One")
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(4)
+    )
+    days = plan_service.list_plan_days(conn, week_plan_id)
+    assert len(days) == 7
+    assert all(d.recipe_id is not None for d in days)
+
+
+def test_get_latest_week_plan_returns_most_recent(conn):
+    make_recipe(conn)
+    first_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 24), calendar=default_calendar(), rng=random.Random(5)
+    )
+    second_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(6)
+    )
+    latest = plan_service.get_latest_week_plan(conn)
+    assert latest.id == second_id
+    assert latest.id != first_id
+
+
+def test_get_latest_week_plan_returns_none_when_no_plans(conn):
+    assert plan_service.get_latest_week_plan(conn) is None
+
+
+def test_get_week_plan_returns_none_for_missing_id(conn):
+    assert plan_service.get_week_plan(conn, 999) is None

@@ -62,6 +62,24 @@ class CalendarDay:
     dinner_ready_time: dt.time
 
 
+@dataclass
+class WeekPlan:
+    id: int
+    week_start_date: str
+    created_at: str
+
+
+@dataclass
+class PlanDay:
+    id: int
+    week_plan_id: int
+    day_of_week: str
+    date: str
+    is_busy: bool
+    dinner_ready_time: str
+    recipe_id: Optional[int]
+
+
 def create_recipes_table(conn: sqlite3.Connection) -> None:
     """Create the `recipes` table if it doesn't already exist."""
     conn.execute(
@@ -102,6 +120,61 @@ def create_recipe_ingredients_table(conn: sqlite3.Connection) -> None:
             quantity REAL,
             unit TEXT,
             store_category TEXT NOT NULL DEFAULT 'other'
+        )
+        """
+    )
+    conn.commit()
+
+
+def create_week_plans_table(conn: sqlite3.Connection) -> None:
+    """Create the `week_plans` table if it doesn't already exist."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS week_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            week_start_date TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.commit()
+
+
+def create_plan_days_table(conn: sqlite3.Connection) -> None:
+    """Create the `plan_days` table if it doesn't already exist."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS plan_days (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            week_plan_id INTEGER NOT NULL REFERENCES week_plans(id) ON DELETE CASCADE,
+            day_of_week TEXT NOT NULL,
+            date TEXT NOT NULL,
+            is_busy INTEGER NOT NULL DEFAULT 0,
+            dinner_ready_time TEXT NOT NULL DEFAULT '18:00',
+            recipe_id INTEGER REFERENCES recipes(id)
+        )
+        """
+    )
+    conn.commit()
+
+
+def create_cook_history_table(conn: sqlite3.Connection) -> None:
+    """Create the `cook_history` table if it doesn't already exist.
+
+    Schema created here in Milestone 4 (ahead of Milestone 7's nominal
+    scope in docs/DATA_MODEL.md) because rotation-avoidance scoring needs
+    to read `last_cooked_at` from it. The write path — a `finalize_plan()`
+    / `mark_day_cooked()` service function — stays Milestone 7 work; see
+    docs/DECISIONS.md.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cook_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipe_id INTEGER NOT NULL REFERENCES recipes(id),
+            plan_day_id INTEGER REFERENCES plan_days(id),
+            cooked_on TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
     )

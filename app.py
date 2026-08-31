@@ -1,9 +1,10 @@
 """
 Meal Planner — Streamlit entry point (Home screen).
 
-Milestone 1: recipes exist now. The weekly plan-at-a-glance view described
-in docs/PRODUCT_SPEC.md §14 arrives in Milestone 4 — for now Home just
-confirms the app is alive and links into the Recipes screen.
+The full plan-at-a-glance view described in docs/PRODUCT_SPEC.md §14
+(7 days, one line each) isn't built yet — no roadmap milestone has
+explicitly called for it on Home so far. For now Home just confirms the
+app is alive and links into the other screens.
 """
 
 import streamlit as st
@@ -16,7 +17,7 @@ st.set_page_config(page_title="Meal Planner", page_icon="🍽️")
 
 def main() -> None:
     st.title("🍽️ Meal Planner")
-    st.caption("Milestone 1 — Core Recipes")
+    st.caption("Milestone 4 — Plan Generation")
 
     try:
         conn = get_connection()
@@ -26,9 +27,9 @@ def main() -> None:
         return
 
     st.write(
-        "Recipes are up and running. Weekly plans and the grocery list will "
-        "appear here as later milestones are completed — see "
-        "`docs/ROADMAP.md`."
+        "Recipes, the weekly calendar, and plan generation are up and "
+        "running. The grocery list appears here as later milestones are "
+        "completed — see `docs/ROADMAP.md`."
     )
 
     if st.button("Browse Recipes →"):
@@ -36,6 +37,9 @@ def main() -> None:
 
     if st.button("Weekly Calendar →"):
         st.switch_page("pages/4_Weekly_Calendar.py")
+
+    if st.button("Week Plan →"):
+        st.switch_page("pages/5_Week_Plan.py")
 
 
 if __name__ == "__main__":
