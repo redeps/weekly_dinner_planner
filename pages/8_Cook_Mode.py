@@ -46,7 +46,7 @@ if st.session_state.get("cook_mode_recipe_id") != recipe.id:
 st.caption(recipe.name)
 
 if photos.photo_exists(recipe.photo_path):
-    st.image(str(photos.resolve_photo_path(recipe.photo_path)), width=150)
+    st.image(str(photos.resolve_photo_path(recipe.photo_path)), width=150, caption=recipe.name)
 
 if not steps:
     st.info("No instructions to cook from yet.")

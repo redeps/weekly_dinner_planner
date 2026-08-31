@@ -230,7 +230,7 @@ for row in st.session_state["ingredient_rows"]:
             st.rerun()
 
     remove_col.markdown("<br>", unsafe_allow_html=True)
-    if remove_col.button("✕", key=f"ing_remove_{key}"):
+    if remove_col.button("✕", key=f"ing_remove_{key}", help="Remove this ingredient"):
         st.session_state["ingredient_rows"] = [
             r for r in st.session_state["ingredient_rows"] if r["_key"] != key
         ]

@@ -34,7 +34,7 @@ if photo_error:
 st.title(recipe.name)
 
 if photos.photo_exists(recipe.photo_path):
-    st.image(str(photos.resolve_photo_path(recipe.photo_path)), width=300)
+    st.image(str(photos.resolve_photo_path(recipe.photo_path)), width=300, caption=recipe.name)
 
 badges = f"{recipe.cook_time_minutes} min · {'⭐' * recipe.family_enjoyment} · {recipe.seasonality}"
 if recipe.is_quick_fallback:
@@ -88,9 +88,24 @@ with col1:
         st.switch_page("pages/2_Add_Edit_Recipe.py")
 with col2:
     if st.button("Deactivate"):
-        deactivate_recipe(conn, recipe.id)
-        st.session_state.pop("selected_recipe_id", None)
-        st.switch_page("pages/1_Recipes.py")
+        st.session_state["confirm_deactivate_id"] = recipe.id
 with col3:
     if st.button("← Back to Recipes"):
         st.switch_page("pages/1_Recipes.py")
+
+if st.session_state.get("confirm_deactivate_id") == recipe.id:
+    st.warning(
+        f"Deactivate **{recipe.name}**? It will stop appearing in browsing, "
+        "plan generation, and swaps. This is reversible in the database "
+        "(a soft-delete, not a permanent one), but there's no restore "
+        "button in the UI yet."
+    )
+    confirm_col, cancel_col = st.columns(2)
+    if confirm_col.button("Yes, deactivate", type="primary"):
+        deactivate_recipe(conn, recipe.id)
+        st.session_state.pop("selected_recipe_id", None)
+        st.session_state.pop("confirm_deactivate_id", None)
+        st.switch_page("pages/1_Recipes.py")
+    if cancel_col.button("Cancel"):
+        st.session_state.pop("confirm_deactivate_id", None)
+        st.rerun()

@@ -148,7 +148,7 @@ from existing cookbooks is a real need. See `docs/PRODUCT_SPEC.md` §16 and
 - display photo on recipe cards and detail/day/Cook Mode views
 - replace / delete photo
 
-## Milestone 12 — Polish ⬜
+## Milestone 12 — Polish ✅
 
 - mobile UX pass
 - empty states (no recipes yet, no plan generated yet, etc.)

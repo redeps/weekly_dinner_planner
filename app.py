@@ -7,9 +7,11 @@ explicitly called for it on Home so far. For now Home just confirms the
 app is alive and links into the other screens.
 """
 
+import datetime as dt
+
 import streamlit as st
 
-from database import get_connection
+from database import export_database_bytes, get_connection
 from services.recipes import seed_quick_fallback_recipes
 
 st.set_page_config(page_title="Meal Planner", page_icon="🍽️")
@@ -17,7 +19,7 @@ st.set_page_config(page_title="Meal Planner", page_icon="🍽️")
 
 def main() -> None:
     st.title("🍽️ Meal Planner")
-    st.caption("Milestone 7 — Cook Mode")
+    st.caption("Milestone 12 — Polish")
 
     try:
         conn = get_connection()
@@ -46,6 +48,19 @@ def main() -> None:
 
     if st.button("Cook History →"):
         st.switch_page("pages/7_Cook_History.py")
+
+    st.subheader("Backup")
+    st.caption(
+        "Download a snapshot of your recipes, plans, and cook history. "
+        "Recipe photos aren't included — back up the `photos/` folder "
+        "separately if you want those too."
+    )
+    st.download_button(
+        "Download Backup (.db)",
+        data=export_database_bytes(),
+        file_name=f"meal_planner_backup_{dt.date.today().isoformat()}.db",
+        mime="application/octet-stream",
+    )
 
 
 if __name__ == "__main__":

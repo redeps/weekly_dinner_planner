@@ -7,6 +7,7 @@ logic.
 """
 
 import sqlite3
+import tempfile
 from pathlib import Path
 
 import models
@@ -26,3 +27,23 @@ def get_connection() -> sqlite3.Connection:
     models.create_plan_days_table(conn)
     models.create_cook_history_table(conn)
     return conn
+
+
+def export_database_bytes() -> bytes:
+    """A consistent backup snapshot of the whole database, as bytes, for
+    download (see docs/PRODUCT_SPEC.md / Milestone 12 backup-export).
+
+    Uses sqlite3's own backup API rather than reading DB_PATH's raw bytes,
+    so a concurrent write in progress can't yield a corrupt snapshot."""
+    source_conn = get_connection()
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir) / "backup.db"
+            dest_conn = sqlite3.connect(tmp_path)
+            try:
+                source_conn.backup(dest_conn)
+            finally:
+                dest_conn.close()
+            return tmp_path.read_bytes()
+    finally:
+        source_conn.close()

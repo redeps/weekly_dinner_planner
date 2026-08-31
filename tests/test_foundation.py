@@ -33,3 +33,46 @@ def test_db_file_created_under_data_dir():
     database.get_connection()
     assert database.DB_PATH.parent == database.DATA_DIR
     assert database.DB_PATH.exists()
+
+
+def test_export_database_bytes_returns_valid_sqlite_file():
+    database.get_connection()  # ensure the schema exists
+    exported = database.export_database_bytes()
+    assert exported[:16] == b"SQLite format 3\x00"
+
+
+def test_export_database_bytes_reflects_current_data(tmp_path):
+    conn = database.get_connection()
+    conn.execute(
+        """
+        INSERT INTO recipes (name, cook_time_minutes, family_enjoyment, seasonality, servings)
+        VALUES ('Export Test Recipe', 10, 3, 'all-season', 2)
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    exported = database.export_database_bytes()
+    backup_path = tmp_path / "exported.db"
+    backup_path.write_bytes(exported)
+
+    backup_conn = sqlite3.connect(backup_path)
+    names = [
+        row[0]
+        for row in backup_conn.execute("SELECT name FROM recipes WHERE name = 'Export Test Recipe'")
+    ]
+    backup_conn.close()
+    assert names == ["Export Test Recipe"]
+
+
+def test_export_database_bytes_does_not_modify_original():
+    conn = database.get_connection()
+    before = conn.execute("SELECT COUNT(*) FROM recipes").fetchone()[0]
+    conn.close()
+
+    database.export_database_bytes()
+
+    conn = database.get_connection()
+    after = conn.execute("SELECT COUNT(*) FROM recipes").fetchone()[0]
+    conn.close()
+    assert before == after

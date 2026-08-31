@@ -322,3 +322,38 @@ Implementation choices for `services/photos.py`:
   widget, through resize/save, through the DB write, through display on
   all four required screens (recipe cards, Recipe Detail, Week Plan day
   rows, Cook Mode).
+
+## 2026-08-31 — Milestone 12 (Polish) implementation choices
+
+- **Confirmation for Deactivate is an inline two-step confirm
+  (session-state gated warning + Yes/Cancel), not `st.dialog`.**
+  `st.dialog` exists and renders in this Streamlit version, but a quick
+  check found its *interactions* don't reliably complete through
+  `AppTest` (a click on a button inside the dialog didn't visibly take
+  effect, even though the dialog's own contents rendered) — real enough
+  uncertainty that shipping it without being able to verify the full
+  confirm/cancel flow end-to-end didn't feel right. The inline pattern is
+  simpler, has no such gap, and is exactly what's used elsewhere in this
+  app already (e.g. Milestone 7's Cook Mode step navigation).
+- **Backup export uses SQLite's own `Connection.backup()` API**, not a
+  raw read of `DB_PATH`'s bytes, so a concurrent write in progress can't
+  produce a corrupt downloaded snapshot. Photos aren't included in the
+  download — the roadmap's own example ("download the SQLite file") is
+  treated as the intended scope; the Home page's backup section says so
+  explicitly so it isn't mistaken for a complete backup.
+- **The "mobile UX pass" is a targeted restructure of Week Plan**
+  (collapsing each day's buttons into a per-day `st.expander("Actions")`,
+  leaving a compact always-visible summary line), not a general pass over
+  every screen. Week Plan was the clear outlier — 7 rows of 4-5 always-
+  visible buttons each is the app's worst case for a narrow screen; other
+  screens' `st.columns` layouts already degrade reasonably via
+  Streamlit's own responsive column-stacking, which this project doesn't
+  need to reimplement.
+- **Empty states elsewhere were mostly already in place** — Week Plan,
+  Grocery List, Cook History, and the two "no recipe selected" screens
+  each got a friendly empty-state message as part of the milestone that
+  introduced them, rather than deferred to this one. The one real gap
+  fixed here: Recipes browsing showed the same generic message whether
+  the database was genuinely empty or just the active filters matched
+  nothing — now distinguished, since the correct next action differs
+  ("add a recipe" vs. "adjust your filters").

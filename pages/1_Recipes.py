@@ -36,14 +36,17 @@ recipes = list_recipes(
 )
 
 if not recipes:
-    st.info("No recipes match your filters yet.")
+    if list_recipes(conn):
+        st.info("No recipes match your filters — try adjusting search, season, or quick-fallback.")
+    else:
+        st.info("You haven't added any recipes yet — click **+ Add Recipe** above to get started.")
 else:
     for recipe in recipes:
         with st.container(border=True):
             cols = st.columns([1, 3, 1])
             with cols[0]:
                 if photos.photo_exists(recipe.photo_path):
-                    st.image(str(photos.resolve_photo_path(recipe.photo_path)))
+                    st.image(str(photos.resolve_photo_path(recipe.photo_path)), caption=recipe.name)
             with cols[1]:
                 title = recipe.name
                 if recipe.is_quick_fallback:

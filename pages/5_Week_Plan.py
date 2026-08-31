@@ -66,48 +66,68 @@ if st.button("Finalize Plan (mark all cooked)"):
 for plan_day in list_plan_days(conn, week_plan.id):
     recipe = get_recipe(conn, plan_day.recipe_id) if plan_day.recipe_id else None
     with st.container(border=True):
-        cols = st.columns([1, 2.5, 1, 1, 1, 1.3])
+        # Each day is a compact, always-visible summary line with the
+        # buttons tucked into a collapsed "Actions" expander — keeps 7
+        # days scannable on a narrow/mobile screen instead of 7 rows of
+        # 4-5 buttons each always expanded.
+        cols = st.columns([1, 3])
         cols[0].write(f"**{plan_day.day_of_week.capitalize()}**")
         cols[0].caption(plan_day.date)
         if recipe:
+            cooked = has_been_cooked(conn, plan_day.id)
             if photos.photo_exists(recipe.photo_path):
-                cols[1].image(str(photos.resolve_photo_path(recipe.photo_path)), width=60)
+                cols[1].image(
+                    str(photos.resolve_photo_path(recipe.photo_path)), width=60, caption=recipe.name
+                )
             label = recipe.name
             if plan_day.is_busy:
                 label += " · busy day"
+            if cooked:
+                label += " · ✓ Cooked"
             cols[1].write(label)
             cols[1].caption(
                 f"{recipe.cook_time_minutes} min · dinner ready {plan_day.dinner_ready_time}"
             )
-            if cols[2].button("View", key=f"view_day_{plan_day.id}"):
-                st.session_state["selected_recipe_id"] = recipe.id
-                st.switch_page("pages/3_Recipe_Detail.py")
-            if cols[3].button("Swap", key=f"swap_day_{plan_day.id}"):
-                try:
-                    intent = st.session_state.get(f"swap_intent_{plan_day.id}", "").strip()
-                    candidate_filter = None
-                    if ai_available and intent:
-                        candidate_filter = lambda candidates, _i=intent: (
-                            ai_assist.narrow_candidates_by_intent(candidates, _i)
-                        )
-                    swap_day_recipe(conn, plan_day.id, candidate_filter=candidate_filter)
-                    st.rerun()
-                except ValueError as exc:
-                    st.error(str(exc))
-            if cols[4].button("Cook", key=f"cook_day_{plan_day.id}"):
-                st.session_state["selected_recipe_id"] = recipe.id
-                st.switch_page("pages/8_Cook_Mode.py")
-            if has_been_cooked(conn, plan_day.id):
-                cols[5].write("✓ Cooked")
-            elif cols[5].button("Mark Cooked", key=f"mark_cooked_{plan_day.id}"):
-                mark_day_cooked(conn, plan_day.id)
-                st.rerun()
-            if ai_available:
-                st.text_input(
-                    "Swap intent (optional)",
-                    key=f"swap_intent_{plan_day.id}",
-                    placeholder="e.g. vegetarian, quicker, use up broccoli...",
-                    label_visibility="collapsed",
-                )
+
+            with st.expander("Actions"):
+                action_cols = st.columns(3)
+                if action_cols[0].button(
+                    "View", key=f"view_day_{plan_day.id}", use_container_width=True
+                ):
+                    st.session_state["selected_recipe_id"] = recipe.id
+                    st.switch_page("pages/3_Recipe_Detail.py")
+                if action_cols[1].button(
+                    "Swap", key=f"swap_day_{plan_day.id}", use_container_width=True
+                ):
+                    try:
+                        intent = st.session_state.get(f"swap_intent_{plan_day.id}", "").strip()
+                        candidate_filter = None
+                        if ai_available and intent:
+                            candidate_filter = lambda candidates, _i=intent: (
+                                ai_assist.narrow_candidates_by_intent(candidates, _i)
+                            )
+                        swap_day_recipe(conn, plan_day.id, candidate_filter=candidate_filter)
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+                if action_cols[2].button(
+                    "Cook", key=f"cook_day_{plan_day.id}", use_container_width=True
+                ):
+                    st.session_state["selected_recipe_id"] = recipe.id
+                    st.switch_page("pages/8_Cook_Mode.py")
+
+                if not cooked:
+                    if st.button(
+                        "Mark Cooked", key=f"mark_cooked_{plan_day.id}", use_container_width=True
+                    ):
+                        mark_day_cooked(conn, plan_day.id)
+                        st.rerun()
+
+                if ai_available:
+                    st.text_input(
+                        "Swap intent (optional)",
+                        key=f"swap_intent_{plan_day.id}",
+                        placeholder="e.g. vegetarian, quicker, use up broccoli...",
+                    )
         else:
             cols[1].write("_No recipe assigned._")
