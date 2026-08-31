@@ -233,3 +233,61 @@ Implementation choices for `services/ai_assist.py`, per `PRODUCT_SPEC.md`
   expected — one graceful-degradation contract for every caller, verified
   in this environment (no Ollama installed) as real behavior, not just
   mocked.
+
+## 2026-08-31 — Milestone 10 implementation choices
+
+Implementation choices for `services/recipe_import.py` and the
+`services/ai_assist.py` backend refactor, on top of the design already
+recorded above (Structured-data recipe import; swappable AI backend, and
+the two entries after it):
+
+- **Backend is explicit configuration, never automatic fallback.**
+  `AI_ASSIST_BACKEND` (`ollama` default, or `gemini`) picks the text
+  backend outright; if it's `ollama` and Ollama isn't reachable, the app
+  does not silently try Gemini even if a key happens to be set, and vice
+  versa. Rationale: a household running locally shouldn't have its
+  ingredient names or swap-intent text start going to a cloud API just
+  because a key was configured for some other reason (e.g. testing) — the
+  operator chooses the backend deliberately. An invalid `AI_ASSIST_BACKEND`
+  value falls back to `ollama` rather than erroring.
+- **Gemini reached via `urllib` (stdlib) against the public
+  `generativelanguage.googleapis.com` REST API, not the `google-genai`
+  SDK.** Same reasoning as Ollama's stdlib client (see the AI Assist
+  implementation entry above): a handful of POST requests don't justify a
+  new dependency. One low-level `_call_gemini()` backs both the text
+  backend and photo import, since both are the same `generateContent`
+  call with different `parts` (text-only vs. text+`inline_data`).
+  `GEMINI_MODEL` defaults to `gemini-2.0-flash`, overridable — Google's
+  model lineup moves faster than this file will be revisited, so this is
+  expected to need bumping over time.
+- **`is_available()` for the Gemini backend checks only that a key is
+  configured, not a live reachability call.** Unlike Ollama's cheap local
+  `/api/tags` ping, a real Gemini call costs a request against a metered
+  (if free) quota; spending one just to answer "is this available" isn't
+  worth it; an actual `_generate()` call still degrades gracefully if the
+  key turns out to be invalid or the quota is exhausted.
+- **`services/recipe_import.py` is not treated as "AI assist" for
+  isolation purposes** (docs/AGENT_INSTRUCTIONS.md §6) — its primary path
+  is deterministic and needs no model, so it's safe for the Add/Edit
+  Recipe screen to call directly and unconditionally, unlike
+  `services/ai_assist.py`. Its *fallback* path does call into
+  `ai_assist.import_recipe_from_text()`, which already degrades to `None`
+  on its own if no backend is configured — recipe_import.py doesn't need
+  to know or care whether that happened.
+- **`recipeIngredient` lines are stored whole, not split into
+  name/quantity/unit.** schema.org's `recipeIngredient` is a flat list of
+  free-text lines (e.g. "2 cups flour"), not structured fields — splitting
+  that out reliably is exactly the kind of per-site/per-phrasing parsing
+  logic a scraping library would bundle, which `docs/DECISIONS.md`
+  (Structured-data parser is stdlib-only) deliberately avoids taking on.
+  Each line becomes one ingredient row with the full text as its `name`;
+  the user can split it manually if they want grocery-list unit
+  aggregation to match. A real, honest limitation of the stdlib-only
+  choice, not an oversight.
+- **Verification note:** graceful degradation across all four backend
+  combinations (none / Ollama only / Gemini only / both) is verified by
+  mocked tests, and all core screens were re-confirmed working against
+  this environment's real state (no Ollama, no Gemini key). The
+  live Gemini-available code paths (text and photo) are verified only via
+  mocked responses — this environment has no Gemini API key, so they
+  haven't been exercised against the real API.

@@ -102,7 +102,7 @@ after this work was already done — see `DECISIONS.md`.
 - graceful degradation if the local model isn't running (feature hidden or
   disabled, no errors surfaced to the core flow)
 
-## Milestone 10 — Recipe Import (URL + Photo) + Swappable AI Backend ⬜
+## Milestone 10 — Recipe Import (URL + Photo) + Swappable AI Backend ✅
 
 Course-correction on Milestone 9: recipe import shouldn't depend on a
 model being available at all for the common URL case, suggestion features

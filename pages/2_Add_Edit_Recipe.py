@@ -1,19 +1,31 @@
 """
 Add/Edit Recipe form, including a repeatable ingredient-rows section.
-Photo upload (Milestone 10) is not part of this form yet — see
-docs/ROADMAP.md.
+Photo upload for the recipe's own photo (Milestone 11) is not part of
+this form yet — see docs/ROADMAP.md. Photo *import* (extracting a draft
+from a photo of a cookbook page) is different and is available here —
+see docs/PRODUCT_SPEC.md §16b.
 
-AI Assist (recipe import, ingredient category suggestions) is optional —
-see docs/AGENT_INSTRUCTIONS.md §6. Its "Import with AI" section and
-per-row "Suggest" buttons simply don't appear when Ollama isn't reachable;
-the rest of this form works identically either way.
+Recipe import layers three paths, per docs/PRODUCT_SPEC.md §16 (see
+docs/DECISIONS.md for the reasoning):
+1. URL structured data (services/recipe_import) — deterministic, no AI
+   backend needed at all.
+2. AI text fallback (services/ai_assist) — for pasted free text, or a URL
+   with no structured data; needs a configured backend (Ollama or
+   Gemini).
+3. AI photo import (services/ai_assist) — always Gemini; only appears if
+   a Gemini key is configured, independent of the text backend setting.
+
+Ingredient category suggestions are also optional AI Assist — see
+docs/AGENT_INSTRUCTIONS.md §6. Every AI-dependent control here simply
+doesn't appear when its backend isn't configured/reachable; the rest of
+this form (including URL import) works identically either way.
 """
 
 import streamlit as st
 
 from database import get_connection
 from models import SEASONALITIES, STORE_CATEGORIES
-from services import ai_assist
+from services import ai_assist, recipe_import
 from services.ingredients import list_ingredients, replace_recipe_ingredients
 from services.recipes import create_recipe, get_recipe, update_recipe
 
@@ -66,49 +78,80 @@ if st.session_state.get("ingredient_rows_for") != target_recipe_id:
     st.session_state["ingredient_rows"] = rows
     st.session_state["ingredient_rows_for"] = target_recipe_id
 
-if not existing and ai_available:
-    with st.expander("Import with AI (paste text or a URL)"):
+def _apply_import_draft(draft: dict) -> None:
+    """Push an import draft (from URL structured data, AI text fallback,
+    or AI photo import) into the form fields and ingredient rows, then
+    rerun so it's visible. Never saved automatically — the user still
+    reviews everything below before clicking Save Recipe."""
+    st.session_state["af_name"] = draft["name"]
+    st.session_state["af_cook_time"] = draft["cook_time_minutes"]
+    st.session_state["af_servings"] = draft["servings"]
+    st.session_state["af_instructions"] = draft["instructions"] or ""
+
+    rows = []
+    for ing in draft["ingredients"]:
+        st.session_state["ingredient_row_counter"] += 1
+        rows.append(
+            {
+                "_key": st.session_state["ingredient_row_counter"],
+                "_cat_version": 0,
+                "name": ing["name"],
+                "quantity": "" if ing["quantity"] is None else str(ing["quantity"]),
+                "unit": ing["unit"] or "",
+                "store_category": "other",
+            }
+        )
+    st.session_state["ingredient_rows"] = rows
+    st.session_state["ingredient_rows_for"] = target_recipe_id
+    st.session_state["ai_import_message"] = (
+        f"Imported \"{draft['name']}\" — review and adjust below before saving."
+    )
+    st.rerun()
+
+
+if not existing:
+    with st.expander("Import a recipe (URL, pasted text, or a photo)"):
         import_input = st.text_area(
-            "Recipe text or URL",
+            "Recipe URL or pasted text",
             key="ai_import_input",
-            placeholder="Paste a recipe (or a URL to one) here...",
+            placeholder="Paste a recipe URL, or the recipe text itself...",
             height=100,
         )
-        if st.button("Extract with AI"):
-            source_text = import_input.strip()
-            if source_text.lower().startswith(("http://", "https://")):
-                source_text = ai_assist.fetch_url_text(source_text) or ""
-            draft = ai_assist.import_recipe_from_text(source_text) if source_text else None
-            if not draft:
+        if st.button("Import"):
+            source = import_input.strip()
+            draft = None
+            if source.lower().startswith(("http://", "https://")):
+                draft = recipe_import.parse_recipe_url(source)  # deterministic, no AI needed
+                if draft is None and ai_available:
+                    fetched = ai_assist.fetch_url_text(source)
+                    draft = ai_assist.import_recipe_from_text(fetched) if fetched else None
+            elif source and ai_available:
+                draft = ai_assist.import_recipe_from_text(source)
+
+            if draft:
+                _apply_import_draft(draft)
+            elif not source:
+                st.error("Paste a recipe URL or some recipe text first.")
+            else:
                 st.error(
                     "Couldn't extract a recipe from that — check the text/URL, "
                     "or fill in the form manually below."
                 )
-            else:
-                st.session_state["af_name"] = draft["name"]
-                st.session_state["af_cook_time"] = draft["cook_time_minutes"]
-                st.session_state["af_servings"] = draft["servings"]
-                st.session_state["af_instructions"] = draft["instructions"] or ""
 
-                rows = []
-                for ing in draft["ingredients"]:
-                    st.session_state["ingredient_row_counter"] += 1
-                    rows.append(
-                        {
-                            "_key": st.session_state["ingredient_row_counter"],
-                            "_cat_version": 0,
-                            "name": ing["name"],
-                            "quantity": "" if ing["quantity"] is None else str(ing["quantity"]),
-                            "unit": ing["unit"] or "",
-                            "store_category": "other",
-                        }
+        if ai_assist.is_photo_import_available():
+            photo = st.file_uploader(
+                "Or upload a photo of a recipe (cookbook page, recipe card)",
+                type=["jpg", "jpeg", "png"],
+            )
+            if photo is not None and st.button("Extract from Photo"):
+                draft = ai_assist.import_recipe_from_photo(photo.getvalue(), mime_type=photo.type)
+                if draft:
+                    _apply_import_draft(draft)
+                else:
+                    st.error(
+                        "Couldn't extract a recipe from that photo — try a clearer "
+                        "image, or fill in the form manually below."
                     )
-                st.session_state["ingredient_rows"] = rows
-                st.session_state["ingredient_rows_for"] = target_recipe_id
-                st.session_state["ai_import_message"] = (
-                    f"Imported \"{draft['name']}\" — review and adjust below before saving."
-                )
-                st.rerun()
 
 st.session_state.setdefault("af_name", existing.name if existing else "")
 st.session_state.setdefault("af_cook_time", existing.cook_time_minutes if existing else 30)

@@ -95,7 +95,56 @@ ready-to-use prompts for each milestone. Don't skip ahead — finish and test
 one milestone before starting the next. `docs/AGENT_INSTRUCTIONS.md` has the
 rules any future coding agent (or you) should follow.
 
-## 10. Keep personal data and photos out of Git
+## 10. AI Assist (optional)
+
+The app runs completely fine with no AI backend configured — Recipe Import
+from a URL (structured data) needs none at all, and every other AI-assisted
+feature (ingredient categorization, swap-intent, shortcuts, the free-text/
+photo import paths) simply doesn't appear in the UI. See
+`docs/PRODUCT_SPEC.md` §16 and `docs/DECISIONS.md` for the full reasoning.
+Two independent backends, both optional:
+
+**Local — Ollama** (recipe import fallback, categorization, swap-intent,
+shortcuts). No API key, no cost, nothing leaves the machine.
+
+1. Install Ollama and pull a small model, e.g. `ollama pull llama3.2`.
+2. Run `ollama serve` (or let the Ollama app run in the background).
+3. That's it — `AI_ASSIST_BACKEND` defaults to `ollama` and
+   `OLLAMA_HOST` defaults to `http://localhost:11434`. Override either as
+   environment variables if your setup differs.
+
+**Hosted — Google Gemini free tier** (same text features as an alternative
+to Ollama — set `AI_ASSIST_BACKEND=gemini` — **and required for photo
+import**, which always uses Gemini regardless of that setting; see
+`docs/DECISIONS.md`).
+
+1. Get a free API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+   (a Google account is all that's needed — no billing setup required for
+   the free tier).
+2. Set it as `GEMINI_API_KEY` **as a secret, never committed**:
+   - **In a Codespace** (recommended): repository → **Settings** →
+     **Secrets and variables** → **Codespaces** → **New repository secret**,
+     name `GEMINI_API_KEY`. It's injected as an environment variable
+     automatically the next time the Codespace (re)starts — no `.env` file,
+     nothing in the repo.
+   - **Local (non-Codespace) dev**: create a `.env` file in the project
+     root (already gitignored — never remove that entry) with
+     `GEMINI_API_KEY=your-key-here`, and load it before running Streamlit,
+     e.g. `export $(cat .env | xargs) && streamlit run app.py`.
+3. Optionally set `AI_ASSIST_BACKEND=gemini` to use Gemini for the
+   text-only features too (default is `ollama`); `GEMINI_MODEL` overrides
+   the default model if needed.
+
+This is relevant for local dev too now, not just a hosted deployment —
+photo import (uploading a photo of a cookbook page/recipe card) has no
+local-model fallback and needs a Gemini key to work at all, in the
+Codespace or anywhere else.
+
+**Never commit an API key.** If one ever ends up in a commit, treat it as
+compromised: revoke it at the link above and issue a new one, don't just
+remove it from a later commit.
+
+## 11. Keep personal data and photos out of Git
 
 `data/` (the SQLite database) and `photos/` (uploaded recipe photos) are
 both listed in `.gitignore` and must stay that way. Never `git add -f` a
@@ -103,13 +152,15 @@ file under either folder. If you ever need to share the database for
 debugging, export the specific rows you need rather than committing the
 `.db` file.
 
-## 11. Cloud deployment is a later milestone
+## 12. Cloud deployment is a later milestone
 
 Everything above runs entirely inside the Codespace with no external
-services. Hosted database, hosted photo storage, authentication, and remote
-access are **Milestone 10** in `docs/ROADMAP.md`, and only happen after the
-local prototype (Milestones 0–9) is stable. Don't add a paid service or
-cloud dependency before then.
+services required. Hosted database, hosted photo storage, authentication,
+and remote access are **Milestone 13** in `docs/ROADMAP.md`, and only
+happen after the local prototype (Milestones 0–12) is stable. The one
+approved exception is Gemini's free tier for the two narrow AI Assist paths
+in step 10 above — don't add any other paid service or cloud dependency
+before Milestone 13.
 
 ## Quick reference
 

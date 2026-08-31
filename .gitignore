@@ -10,6 +10,10 @@ __pycache__/
 # Environment
 .venv/
 venv/
+.env
+
+# Secrets — never commit an API key
+*.key
 
 # Editor/OS
 .DS_Store

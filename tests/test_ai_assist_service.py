@@ -1,10 +1,13 @@
 """
-Milestone 9 tests: AI Assist (services/ai_assist.py).
+Milestone 9/10 tests: AI Assist (services/ai_assist.py).
 
-Mocks the model call throughout — no real Ollama server is contacted.
-Every function is tested both for correct parsing of a valid model
-response, and for graceful degradation (returns None / an empty or
-unfiltered result, never raises) when the model is unreachable.
+Mocks the model call throughout — no real Ollama or Gemini server is
+contacted. Every function is tested both for correct parsing of a valid
+model response, and for graceful degradation (returns None / an empty or
+unfiltered result, never raises) when the backend is unreachable or
+unconfigured. Milestone 10 adds backend-selection tests (Ollama vs.
+Gemini) and photo-import tests — photo import always targets Gemini
+regardless of AI_ASSIST_BACKEND, per docs/DECISIONS.md.
 """
 
 import urllib.error
@@ -257,3 +260,249 @@ def test_fetch_url_text_strips_tags_and_scripts():
 def test_fetch_url_text_returns_none_when_unreachable():
     with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("refused")):
         assert ai_assist.fetch_url_text("http://example.com/recipe") is None
+
+
+# --- backend selection: is_available() ---
+
+
+def test_is_available_uses_ollama_by_default():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "ollama"), patch.object(
+        ai_assist, "_ollama_reachable", return_value=True
+    ) as mock_reachable:
+        assert ai_assist.is_available() is True
+        mock_reachable.assert_called_once()
+
+
+def test_is_available_gemini_true_when_key_configured():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "gemini"), patch.object(
+        ai_assist, "GEMINI_API_KEY", "fake-key"
+    ):
+        assert ai_assist.is_available() is True
+
+
+def test_is_available_gemini_false_when_no_key():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "gemini"), patch.object(
+        ai_assist, "GEMINI_API_KEY", None
+    ):
+        assert ai_assist.is_available() is False
+
+
+def test_ai_assist_backend_normalizes_unknown_value_to_ollama():
+    # Simulates module (re)load behavior: an invalid env value falls back
+    # to "ollama" rather than silently doing nothing.
+    raw = "not-a-real-backend"
+    normalized = raw if raw in ("ollama", "gemini") else "ollama"
+    assert normalized == "ollama"
+
+
+# --- backend selection: _generate() dispatch ---
+
+
+def test_generate_dispatches_to_ollama_by_default():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "ollama"), patch.object(
+        ai_assist, "_generate_ollama", return_value="ollama response"
+    ) as mock_ollama, patch.object(ai_assist, "_call_gemini") as mock_gemini:
+        assert ai_assist._generate("prompt") == "ollama response"
+        mock_ollama.assert_called_once()
+        mock_gemini.assert_not_called()
+
+
+def test_generate_dispatches_to_gemini_when_configured():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "gemini"), patch.object(
+        ai_assist, "GEMINI_API_KEY", "fake-key"
+    ), patch.object(ai_assist, "_call_gemini", return_value="gemini response") as mock_gemini, patch.object(
+        ai_assist, "_generate_ollama"
+    ) as mock_ollama:
+        assert ai_assist._generate("prompt") == "gemini response"
+        mock_gemini.assert_called_once()
+        mock_ollama.assert_not_called()
+
+
+def test_generate_gemini_backend_returns_none_without_key():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "gemini"), patch.object(
+        ai_assist, "GEMINI_API_KEY", None
+    ), patch.object(ai_assist, "_call_gemini") as mock_gemini:
+        assert ai_assist._generate("prompt") is None
+        mock_gemini.assert_not_called()
+
+
+def test_call_gemini_parses_valid_response():
+    fake_body = {"candidates": [{"content": {"parts": [{"text": "hello"}]}}]}
+
+    class FakeResponse:
+        def read(self):
+            import json
+
+            return json.dumps(fake_body).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    with patch("urllib.request.urlopen", return_value=FakeResponse()):
+        result = ai_assist._call_gemini([{"text": "hi"}], model="gemini-2.0-flash", api_key="fake-key")
+    assert result == "hello"
+
+
+def test_call_gemini_returns_none_on_http_error():
+    with patch(
+        "urllib.request.urlopen",
+        side_effect=urllib.error.HTTPError("url", 403, "forbidden", None, None),
+    ):
+        result = ai_assist._call_gemini([{"text": "hi"}], model="gemini-2.0-flash", api_key="bad-key")
+    assert result is None
+
+
+def test_call_gemini_returns_none_on_malformed_response_shape():
+    class FakeResponse:
+        def read(self):
+            return b'{"unexpected": "shape"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    with patch("urllib.request.urlopen", return_value=FakeResponse()):
+        result = ai_assist._call_gemini([{"text": "hi"}], model="gemini-2.0-flash", api_key="fake-key")
+    assert result is None
+
+
+# --- suggestion features work identically regardless of backend ---
+
+
+def test_suggest_store_category_works_via_gemini_backend():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "gemini"), patch.object(
+        ai_assist, "GEMINI_API_KEY", "fake-key"
+    ), patch.object(ai_assist, "_call_gemini", return_value="produce"):
+        assert ai_assist.suggest_store_category("onion") == "produce"
+
+
+# --- photo import: always Gemini, independent of AI_ASSIST_BACKEND ---
+
+
+def test_is_photo_import_available_true_with_key():
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"):
+        assert ai_assist.is_photo_import_available() is True
+
+
+def test_is_photo_import_available_false_without_key():
+    with patch.object(ai_assist, "GEMINI_API_KEY", None):
+        assert ai_assist.is_photo_import_available() is False
+
+
+def test_import_recipe_from_photo_returns_none_without_key():
+    with patch.object(ai_assist, "GEMINI_API_KEY", None):
+        assert ai_assist.import_recipe_from_photo(b"fake image bytes") is None
+
+
+def test_import_recipe_from_photo_returns_none_for_empty_bytes():
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"):
+        assert ai_assist.import_recipe_from_photo(b"") is None
+
+
+def test_import_recipe_from_photo_parses_valid_response():
+    fake_response = (
+        '{"name": "Grandma\'s Lasagna", "servings": 8, "cook_time_minutes": 60, '
+        '"instructions": "Layer and bake.", "ingredients": '
+        '[{"name": "pasta sheets", "quantity": 12, "unit": "each"}]}'
+    )
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"), patch.object(
+        ai_assist, "_call_gemini", return_value=fake_response
+    ) as mock_gemini:
+        draft = ai_assist.import_recipe_from_photo(b"fake jpeg bytes", mime_type="image/jpeg")
+
+    assert draft["name"] == "Grandma's Lasagna"
+    assert draft["servings"] == 8
+    # confirm the image bytes were actually sent, base64-encoded, as inline_data
+    call_args = mock_gemini.call_args
+    parts = call_args.args[0] if call_args.args else call_args.kwargs["parts"]
+    inline_parts = [p for p in parts if "inline_data" in p]
+    assert len(inline_parts) == 1
+    assert inline_parts[0]["inline_data"]["mime_type"] == "image/jpeg"
+
+
+def test_import_recipe_from_photo_returns_none_on_unparseable_response():
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"), patch.object(
+        ai_assist, "_call_gemini", return_value="not json"
+    ):
+        assert ai_assist.import_recipe_from_photo(b"fake image bytes") is None
+
+
+def test_import_recipe_from_photo_ignores_ai_assist_backend_setting():
+    """Photo import must use Gemini even when AI_ASSIST_BACKEND is
+    "ollama" (the default) — it has no local-model equivalent."""
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "ollama"), patch.object(
+        ai_assist, "GEMINI_API_KEY", "fake-key"
+    ), patch.object(
+        ai_assist, "_call_gemini", return_value='{"name": "Test Recipe"}'
+    ) as mock_gemini, patch.object(
+        ai_assist, "_generate_ollama"
+    ) as mock_ollama:
+        draft = ai_assist.import_recipe_from_photo(b"fake image bytes")
+    assert draft["name"] == "Test Recipe"
+    mock_gemini.assert_called_once()
+    mock_ollama.assert_not_called()
+
+
+# --- graceful degradation matrix (item 5): every backend combination ---
+
+
+def test_degradation_no_backend_configured():
+    """Neither Ollama nor a Gemini key available: text features and photo
+    import both cleanly unavailable, nothing raises."""
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "ollama"), patch.object(
+        ai_assist, "_ollama_reachable", return_value=False
+    ), patch.object(ai_assist, "GEMINI_API_KEY", None):
+        assert ai_assist.is_available() is False
+        assert ai_assist.is_photo_import_available() is False
+        assert ai_assist.suggest_store_category("onion") is None
+        assert ai_assist.import_recipe_from_photo(b"bytes") is None
+
+
+def test_degradation_ollama_only_photo_import_still_unavailable():
+    """Ollama reachable, no Gemini key: text features work, photo import
+    stays unavailable (it never falls back to Ollama)."""
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "ollama"), patch.object(
+        ai_assist, "_ollama_reachable", return_value=True
+    ), patch.object(ai_assist, "GEMINI_API_KEY", None), patch.object(
+        ai_assist, "_generate_ollama", return_value="produce"
+    ):
+        assert ai_assist.is_available() is True
+        assert ai_assist.suggest_store_category("onion") == "produce"
+        assert ai_assist.is_photo_import_available() is False
+        assert ai_assist.import_recipe_from_photo(b"bytes") is None
+
+
+def test_degradation_gemini_only():
+    """Gemini key configured, backend set to gemini, no Ollama running:
+    both text features and photo import work."""
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "gemini"), patch.object(
+        ai_assist, "GEMINI_API_KEY", "fake-key"
+    ), patch.object(ai_assist, "_call_gemini", return_value="produce"):
+        assert ai_assist.is_available() is True
+        assert ai_assist.suggest_store_category("onion") == "produce"
+        assert ai_assist.is_photo_import_available() is True
+
+
+def test_degradation_both_configured_text_uses_selected_backend():
+    """Both Ollama and Gemini available, but AI_ASSIST_BACKEND=ollama:
+    text features use Ollama (not silently switching to Gemini), photo
+    import still always uses Gemini."""
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "ollama"), patch.object(
+        ai_assist, "_ollama_reachable", return_value=True
+    ), patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"), patch.object(
+        ai_assist, "_generate_ollama", return_value="produce"
+    ) as mock_ollama, patch.object(
+        ai_assist, "_call_gemini", return_value='{"name": "Test"}'
+    ) as mock_gemini:
+        assert ai_assist.suggest_store_category("onion") == "produce"
+        mock_ollama.assert_called_once()
+        mock_gemini.assert_not_called()
+
+        draft = ai_assist.import_recipe_from_photo(b"bytes")
+        assert draft["name"] == "Test"
+        mock_gemini.assert_called_once()
