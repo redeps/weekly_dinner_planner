@@ -48,6 +48,7 @@ def recipe_id(isolated_db):
 
 def test_clicking_deactivate_alone_does_not_deactivate(recipe_id):
     at = AppTest.from_file(RECIPE_DETAIL_PAGE)
+    at.session_state["authenticated"] = True
     at.session_state["selected_recipe_id"] = recipe_id
     at = at.run()
 
@@ -66,7 +67,9 @@ def test_confirming_deactivate_actually_deactivates(recipe_id):
     # deactivate" click triggers st.switch_page(), which AppTest can only
     # resolve correctly when the session started from the real entrypoint
     # (a known AppTest limitation, not an app bug).
-    at = AppTest.from_file(HOME_PAGE).run()
+    at = AppTest.from_file(HOME_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     at.session_state["selected_recipe_id"] = recipe_id
     at = at.switch_page(RECIPE_DETAIL_PAGE.replace(str(REPO) + "/", "")).run()
 
@@ -82,6 +85,7 @@ def test_confirming_deactivate_actually_deactivates(recipe_id):
 
 def test_cancelling_deactivate_leaves_recipe_active(recipe_id):
     at = AppTest.from_file(RECIPE_DETAIL_PAGE)
+    at.session_state["authenticated"] = True
     at.session_state["selected_recipe_id"] = recipe_id
     at = at.run()
 
@@ -101,6 +105,7 @@ def test_rerendering_after_deactivate_click_does_not_deactivate(recipe_id):
     while the confirmation is pending must not itself trigger the
     destructive action."""
     at = AppTest.from_file(RECIPE_DETAIL_PAGE)
+    at.session_state["authenticated"] = True
     at.session_state["selected_recipe_id"] = recipe_id
     at = at.run()
     at = [b for b in at.button if b.label == "Deactivate"][0].click().run()
@@ -119,7 +124,9 @@ def test_rerendering_after_deactivate_click_does_not_deactivate(recipe_id):
 
 
 def test_recipes_page_shows_get_started_message_when_database_is_empty(isolated_db):
-    at = AppTest.from_file(RECIPES_PAGE).run()
+    at = AppTest.from_file(RECIPES_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     assert not at.exception
     infos = [i.value for i in at.info]
     assert any("haven't added any recipes yet" in i for i in infos)
@@ -127,7 +134,9 @@ def test_recipes_page_shows_get_started_message_when_database_is_empty(isolated_
 
 
 def test_recipes_page_shows_filter_message_when_recipes_exist_but_filtered_out(recipe_id):
-    at = AppTest.from_file(RECIPES_PAGE).run()
+    at = AppTest.from_file(RECIPES_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     search_box = [w for w in at.text_input if w.label == "Search"][0]
     at = search_box.set_value("no such recipe name").run()
     assert not at.exception
@@ -140,7 +149,9 @@ def test_recipes_page_shows_filter_message_when_recipes_exist_but_filtered_out(r
 
 
 def test_home_page_offers_a_backup_download(isolated_db):
-    at = AppTest.from_file(HOME_PAGE).run()
+    at = AppTest.from_file(HOME_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     assert not at.exception
     download_buttons = at.download_button
     assert len(download_buttons) == 1

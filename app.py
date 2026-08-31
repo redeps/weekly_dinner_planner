@@ -12,9 +12,11 @@ import datetime as dt
 import streamlit as st
 
 from database import export_database_bytes, get_connection
+from services.auth import require_password
 from services.recipes import seed_quick_fallback_recipes
 
 st.set_page_config(page_title="Meal Planner", page_icon="🍽️")
+require_password()
 
 
 def main() -> None:

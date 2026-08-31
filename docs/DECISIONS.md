@@ -357,3 +357,43 @@ Implementation choices for `services/photos.py`:
   the database was genuinely empty or just the active filters matched
   nothing — now distinguished, since the correct next action differs
   ("add a recipe" vs. "adjust your filters").
+
+## 2026-08-31 — Auth: in-app passphrase, not Streamlit's private-app mechanism
+
+Streamlit Community Cloud's free tier allows only **one** private app,
+already spent on a sibling household app ("home-inventory"). meal-planner
+therefore deploys as a **public** app from a **public** repo instead,
+gated by a shared household passphrase built into the app itself
+(`services/auth.py`), rather than relying on Streamlit's built-in
+private-app access control.
+
+`require_password()` checks `st.session_state["authenticated"]` first (no
+re-prompt within a session); otherwise it renders a
+`st.text_input(type="password")` and compares the entry against
+`st.secrets["HOUSEHOLD_PASSWORD"]` (a root-level secret, same placement
+convention as `GEMINI_API_KEY` — before any `[section]` in
+`secrets.toml`) using `hmac.compare_digest`, not `==`, to avoid a trivial
+timing side-channel. A missing secret fails closed — access is refused,
+not silently granted.
+
+**The critical detail this design has to handle itself, which Streamlit's
+private-app mechanism handled automatically: multipage apps let a user
+deep-link straight to any file under `pages/`, bypassing `app.py`
+entirely.** A gate placed only in `app.py` would protect nothing.
+`require_password()` is called at the top of `app.py` **and every file in
+`pages/`** — immediately after `st.set_page_config(...)`, which Streamlit
+requires to be the first Streamlit call in a script, so it has to come
+after that, not before. Verified directly: every page, loaded on its own
+without going through `app.py` first, shows the gate and nothing else
+(`tests/test_auth_gate.py`), both against mocked secrets and against this
+environment's real (locally configured) `HOUSEHOLD_PASSWORD`.
+
+Consequence for the rest of Milestone 13's hosting decisions (Postgres
+provider, photo storage, schema migration approach, CI/deployment
+specifics): still open, to be proposed and recorded separately. This
+entry covers only the auth mechanism, decided and implemented ahead of
+the rest because it was a blocking constraint (the one-private-app-slot
+conflict) discovered while planning deployment. The repository's
+visibility has not been changed and nothing has been deployed yet —
+implementing and locally verifying this gate was the explicit prerequisite
+before either happens.

@@ -13,6 +13,7 @@ import streamlit as st
 
 from database import get_connection
 from services import photos
+from services.auth import require_password
 from services.cook_mode import split_instructions_into_steps
 from services.ingredients import list_ingredients
 from services.recipes import get_recipe
@@ -22,6 +23,7 @@ st.set_page_config(
     page_icon="🍽️",
     initial_sidebar_state="collapsed",
 )
+require_password()
 
 conn = get_connection()
 

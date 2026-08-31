@@ -10,9 +10,11 @@ values into `plan_days` when a week plan is generated.
 import streamlit as st
 
 from models import DAYS_OF_WEEK, CalendarDay
+from services.auth import require_password
 from services.calendar import build_default_week_calendar
 
 st.set_page_config(page_title="Weekly Calendar — Meal Planner", page_icon="🍽️")
+require_password()
 
 st.title("Weekly Calendar")
 st.caption(

@@ -161,7 +161,12 @@ from existing cookbooks is a real need. See `docs/PRODUCT_SPEC.md` §16 and
 
 - hosted database (e.g. managed Postgres)
 - hosted photo storage
-- authentication / access control
+- authentication / access control — **decided:** an in-app household
+  passphrase gate (`services/auth.py`, implemented), not Streamlit
+  Community Cloud's private-app mechanism — see `docs/DECISIONS.md`.
+  Deploys as a **public** app from a **public** repo as a result; the
+  repo's visibility hasn't been changed yet, and nothing has been
+  deployed — both are still pending
 - remote access so the grocery list / plan is reachable away from home, if
   ever wanted
 - migration path from SQLite to the hosted database

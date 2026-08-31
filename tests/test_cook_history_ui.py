@@ -57,13 +57,17 @@ def count_cook_history_rows() -> int:
 
 
 def test_loading_the_page_does_not_write_history(week_plan_id):
-    at = AppTest.from_file(WEEK_PLAN_PAGE).run()
+    at = AppTest.from_file(WEEK_PLAN_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     assert not at.exception
     assert count_cook_history_rows() == 0
 
 
 def test_rerendering_without_clicking_does_not_write_history(week_plan_id):
-    at = AppTest.from_file(WEEK_PLAN_PAGE).run()
+    at = AppTest.from_file(WEEK_PLAN_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     for _ in range(5):
         at = at.run()
         assert not at.exception
@@ -71,7 +75,9 @@ def test_rerendering_without_clicking_does_not_write_history(week_plan_id):
 
 
 def test_one_mark_cooked_click_writes_exactly_one_row(week_plan_id):
-    at = AppTest.from_file(WEEK_PLAN_PAGE).run()
+    at = AppTest.from_file(WEEK_PLAN_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     mark_buttons = [b for b in at.button if b.key and b.key.startswith("mark_cooked_")]
     assert len(mark_buttons) == 7
 
@@ -81,7 +87,9 @@ def test_one_mark_cooked_click_writes_exactly_one_row(week_plan_id):
 
 
 def test_rerendering_after_a_click_does_not_duplicate_the_row(week_plan_id):
-    at = AppTest.from_file(WEEK_PLAN_PAGE).run()
+    at = AppTest.from_file(WEEK_PLAN_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     mark_buttons = [b for b in at.button if b.key and b.key.startswith("mark_cooked_")]
     at = mark_buttons[0].click().run()
     assert count_cook_history_rows() == 1
@@ -96,7 +104,9 @@ def test_rerendering_after_a_click_does_not_duplicate_the_row(week_plan_id):
 
 
 def test_the_marked_day_shows_cooked_state_instead_of_a_button(week_plan_id):
-    at = AppTest.from_file(WEEK_PLAN_PAGE).run()
+    at = AppTest.from_file(WEEK_PLAN_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     mark_buttons = [b for b in at.button if b.key and b.key.startswith("mark_cooked_")]
     marked_key = mark_buttons[0].key
 
@@ -108,7 +118,9 @@ def test_the_marked_day_shows_cooked_state_instead_of_a_button(week_plan_id):
 
 
 def test_finalize_plan_click_writes_seven_rows_and_is_safe_to_repeat(week_plan_id):
-    at = AppTest.from_file(WEEK_PLAN_PAGE).run()
+    at = AppTest.from_file(WEEK_PLAN_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
     finalize_btn = [b for b in at.button if b.label == "Finalize Plan (mark all cooked)"][0]
 
     at = finalize_btn.click().run()

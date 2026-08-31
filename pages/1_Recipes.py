@@ -8,9 +8,11 @@ import streamlit as st
 from database import get_connection
 from models import SEASONALITIES
 from services import photos
+from services.auth import require_password
 from services.recipes import list_recipes
 
 st.set_page_config(page_title="Recipes — Meal Planner", page_icon="🍽️")
+require_password()
 
 conn = get_connection()
 

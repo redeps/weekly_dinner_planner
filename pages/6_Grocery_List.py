@@ -11,10 +11,12 @@ shopping-mode UI, per docs/DECISIONS.md.
 import streamlit as st
 
 from database import get_connection
+from services.auth import require_password
 from services.grocery_list import build_grocery_list
 from services.plan_generation import get_latest_week_plan
 
 st.set_page_config(page_title="Grocery List — Meal Planner", page_icon="🍽️")
+require_password()
 
 conn = get_connection()
 

@@ -17,3 +17,6 @@ venv/
 
 # Editor/OS
 .DS_Store
+
+# Streamlit toml
+.streamlit/

@@ -14,6 +14,7 @@ import streamlit as st
 from database import get_connection
 from models import DAYS_OF_WEEK
 from services import ai_assist, photos
+from services.auth import require_password
 from services.calendar import build_default_week_calendar
 from services.cook_history import finalize_plan, has_been_cooked, mark_day_cooked
 from services.plan_generation import (
@@ -25,6 +26,7 @@ from services.plan_generation import (
 from services.recipes import get_recipe
 
 st.set_page_config(page_title="Week Plan — Meal Planner", page_icon="🍽️")
+require_password()
 
 conn = get_connection()
 

@@ -7,9 +7,11 @@ Week Plan's Mark Cooked / Finalize Plan actions, never by this page.
 import streamlit as st
 
 from database import get_connection
+from services.auth import require_password
 from services.cook_history import list_recent_cook_history
 
 st.set_page_config(page_title="Cook History — Meal Planner", page_icon="🍽️")
+require_password()
 
 conn = get_connection()
 

@@ -161,7 +161,39 @@ pasted into a chat/AI tool prompt. If one ever ends up in a commit, treat
 it as compromised: revoke it in AI Studio and issue a new one, don't just
 remove it from a later commit.
 
-## 11. Keep personal data and photos out of Git
+## 11. Household passphrase (access gate)
+
+The app is gated by a shared household passphrase (`services/auth.py`) —
+see `docs/DECISIONS.md` for why (Streamlit Community Cloud's free tier
+allows only one private app, already used by a sibling household app, so
+this one will deploy as a **public** app from a **public** repo, protected
+by this passphrase instead of Streamlit's private-app access control).
+
+This reads from `st.secrets`, which is a different mechanism than the
+`GEMINI_API_KEY` environment variable above — Streamlit only populates
+`st.secrets` from a `.streamlit/secrets.toml` file (local) or its own
+secrets manager (deployed), never from `.env` or plain environment
+variables.
+
+1. Create `.streamlit/secrets.toml` in the project root if it doesn't
+   already exist (the whole `.streamlit/` folder is gitignored — never
+   remove that entry). Add, at the root level (before any `[section]`
+   header, same rule as any other root-level key):
+   ```toml
+   HOUSEHOLD_PASSWORD = "choose-a-real-passphrase-here"
+   ```
+2. Restart Streamlit if it's already running, so it picks up the new
+   file: `st.secrets` is read once at startup.
+3. **When this app is deployed to Streamlit Community Cloud**, add the
+   same key via that app's **Settings → Secrets** (same TOML format) —
+   nothing to do yet, noted here so it isn't forgotten. Deployment itself,
+   and making the repo public, haven't happened yet; that's a deliberate
+   later step, not part of this change.
+
+Without this secret configured, every page fails closed (refuses access
+and shows a configuration error) rather than silently letting anyone in.
+
+## 12. Keep personal data and photos out of Git
 
 `data/` (the SQLite database) and `photos/` (uploaded recipe photos) are
 both listed in `.gitignore` and must stay that way. Never `git add -f` a
@@ -169,17 +201,20 @@ file under either folder. If you ever need to share the database for
 debugging, export the specific rows you need rather than committing the
 `.db` file.
 
-## 12. Cloud deployment is a later milestone
+## 13. Cloud deployment is a later milestone
 
-services required. Hosted database, hosted photo storage, authentication,
-and remote access are **Milestone 13** in `docs/ROADMAP.md`, and only
-happen after the local prototype (Milestones 0–12) is stable. The one
-approved exception is Gemini's free tier for the two narrow AI Assist paths
-in step 10 above — don't add any other paid service or cloud dependency
-before Milestone 13. Whatever hosting platform is chosen then will have
-its own secret-storage mechanism (e.g. environment variables in its
-dashboard) — the same `GEMINI_API_KEY` name and never-commit rule applies
-there too.
+Everything above runs entirely inside the Codespace with no external
+services required. Hosted database, hosted photo storage, and remote
+access are **Milestone 13** in `docs/ROADMAP.md`, and only happen after
+the local prototype (Milestones 0–12) is stable. Auth for that milestone
+is already decided and implemented (step 11 above) — the two approved
+exceptions to "no paid/cloud dependency yet" are Gemini's free tier (step
+10) and this passphrase gate's eventual public-repo requirement (step
+11); don't add any other paid service or cloud dependency before
+Milestone 13 is actually underway. Whatever database/storage platform is
+chosen then will have its own secret-storage mechanism (e.g. environment
+variables or a secrets manager in its dashboard) — the same
+never-commit rule applies there too.
 
 ## Quick reference
 

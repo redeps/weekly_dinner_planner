@@ -26,10 +26,12 @@ import streamlit as st
 from database import get_connection
 from models import SEASONALITIES, STORE_CATEGORIES
 from services import ai_assist, photos, recipe_import
+from services.auth import require_password
 from services.ingredients import list_ingredients, replace_recipe_ingredients
 from services.recipes import create_recipe, get_recipe, update_recipe
 
 st.set_page_config(page_title="Add/Edit Recipe — Meal Planner", page_icon="🍽️")
+require_password()
 
 conn = get_connection()
 

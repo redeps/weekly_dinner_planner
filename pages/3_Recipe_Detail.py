@@ -11,10 +11,12 @@ import streamlit as st
 
 from database import get_connection
 from services import ai_assist, photos
+from services.auth import require_password
 from services.ingredients import list_ingredients
 from services.recipes import deactivate_recipe, get_recipe
 
 st.set_page_config(page_title="Recipe Detail — Meal Planner", page_icon="🍽️")
+require_password()
 
 conn = get_connection()
 
