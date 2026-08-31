@@ -81,4 +81,6 @@ dependency before Milestone 11, and only then with a `DECISIONS.md` entry.
 ## 11. Commits
 
 Small, milestone-scoped commits with a clear message. Don't bundle unrelated
-changes. Run `pytest` before committing.
+changes. Run `pytest` before committing. When a milestone is finished and
+tested, commit it before moving on to the next one — don't leave completed
+milestone work uncommitted.
