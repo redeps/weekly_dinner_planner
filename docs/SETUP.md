@@ -118,20 +118,36 @@ to Ollama — set `AI_ASSIST_BACKEND=gemini` — **and required for photo
 import**, which always uses Gemini regardless of that setting; see
 `docs/DECISIONS.md`).
 
-1. Get a free API key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
-   (a Google account is all that's needed — no billing setup required for
-   the free tier).
-2. Set it as `GEMINI_API_KEY` **as a secret, never committed**:
+1. **Create the key.** Go to [aistudio.google.com](https://aistudio.google.com),
+   sign in with a Google account, click **Get API key** in the left
+   sidebar, then **Create API key**. Select an existing Google Cloud
+   project or let it create one for you — no billing setup is required
+   for the free tier. Copy the key immediately; it's shown only once (it
+   starts with `AIza`) — if you lose it, create a new one.
+2. **Restrict the key (recommended).** On the API Keys page in AI Studio,
+   open the new key and restrict it to the **Generative Language API**
+   only. This limits the damage if it's ever leaked — an unrestricted key
+   can be used against other Google APIs on the same project, not just
+   Gemini.
+3. **Set it as `GEMINI_API_KEY` — as a secret, never committed:**
    - **In a Codespace** (recommended): repository → **Settings** →
-     **Secrets and variables** → **Codespaces** → **New repository secret**,
-     name `GEMINI_API_KEY`. It's injected as an environment variable
-     automatically the next time the Codespace (re)starts — no `.env` file,
-     nothing in the repo.
+     **Secrets and variables** → **Codespaces** → **New repository
+     secret**. Name it exactly `GEMINI_API_KEY` — the app reads this
+     specific variable (avoid also setting `GOOGLE_API_KEY`; some Google
+     tooling prefers that name over an app-specific one, which could point
+     a *different* tool at a key you meant only for this app — this app
+     itself only ever reads `GEMINI_API_KEY`). Paste the key as the value
+     and save, then **rebuild or restart the Codespace** — an
+     already-running one won't pick up a newly added secret. Verify it's
+     present without printing it:
+     ```bash
+     [ -n "$GEMINI_API_KEY" ] && echo "GEMINI_API_KEY is set" || echo "not set"
+     ```
    - **Local (non-Codespace) dev**: create a `.env` file in the project
      root (already gitignored — never remove that entry) with
      `GEMINI_API_KEY=your-key-here`, and load it before running Streamlit,
      e.g. `export $(cat .env | xargs) && streamlit run app.py`.
-3. Optionally set `AI_ASSIST_BACKEND=gemini` to use Gemini for the
+4. Optionally set `AI_ASSIST_BACKEND=gemini` to use Gemini for the
    text-only features too (default is `ollama`); `GEMINI_MODEL` overrides
    the default model if needed.
 
@@ -140,8 +156,9 @@ photo import (uploading a photo of a cookbook page/recipe card) has no
 local-model fallback and needs a Gemini key to work at all, in the
 Codespace or anywhere else.
 
-**Never commit an API key.** If one ever ends up in a commit, treat it as
-compromised: revoke it at the link above and issue a new one, don't just
+**Never commit an API key** — not in code, not in a committed `.env`, not
+pasted into a chat/AI tool prompt. If one ever ends up in a commit, treat
+it as compromised: revoke it in AI Studio and issue a new one, don't just
 remove it from a later commit.
 
 ## 11. Keep personal data and photos out of Git
@@ -154,13 +171,15 @@ debugging, export the specific rows you need rather than committing the
 
 ## 12. Cloud deployment is a later milestone
 
-Everything above runs entirely inside the Codespace with no external
 services required. Hosted database, hosted photo storage, authentication,
 and remote access are **Milestone 13** in `docs/ROADMAP.md`, and only
 happen after the local prototype (Milestones 0–12) is stable. The one
 approved exception is Gemini's free tier for the two narrow AI Assist paths
 in step 10 above — don't add any other paid service or cloud dependency
-before Milestone 13.
+before Milestone 13. Whatever hosting platform is chosen then will have
+its own secret-storage mechanism (e.g. environment variables in its
+dashboard) — the same `GEMINI_API_KEY` name and never-commit rule applies
+there too.
 
 ## Quick reference
 
