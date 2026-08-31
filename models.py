@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 SEASONALITIES = ("winter", "spring", "summer", "fall", "all-season")
+STORE_CATEGORIES = ("produce", "dairy", "meat", "pantry", "frozen", "other")
 
 
 @dataclass
@@ -28,6 +29,16 @@ class Recipe:
     active: bool
     created_at: str
     updated_at: str
+
+
+@dataclass
+class Ingredient:
+    id: int
+    recipe_id: int
+    name: str
+    quantity: Optional[float]
+    unit: Optional[str]
+    store_category: str
 
 
 def create_recipes_table(conn: sqlite3.Connection) -> None:
@@ -48,6 +59,28 @@ def create_recipes_table(conn: sqlite3.Connection) -> None:
             active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.commit()
+
+
+def create_recipe_ingredients_table(conn: sqlite3.Connection) -> None:
+    """Create the `recipe_ingredients` table if it doesn't already exist.
+
+    Structured rows, not a text blob — see docs/AGENT_INSTRUCTIONS.md — so
+    the grocery list (Milestone 6) can aggregate by name/unit rather than
+    parse free text.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS recipe_ingredients (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            quantity REAL,
+            unit TEXT,
+            store_category TEXT NOT NULL DEFAULT 'other'
         )
         """
     )

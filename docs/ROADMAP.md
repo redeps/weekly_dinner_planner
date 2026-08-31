@@ -30,7 +30,7 @@ proving SQLite is reachable.
 - seed a handful of `is_quick_fallback = true` recipes (fish fingers, frozen
   pizza, takeout, etc.)
 
-## Milestone 2 — Ingredients ⬜
+## Milestone 2 — Ingredients ✅
 
 - `recipe_ingredients` table (name, quantity, unit, store category)
 - Add/Edit Recipe form gains a repeatable ingredient-rows section

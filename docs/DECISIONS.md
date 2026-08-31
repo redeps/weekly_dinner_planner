@@ -56,3 +56,13 @@ is working.
 No paid infrastructure during prototype development (Milestones 0–9).
 Hosted/paid services are deferred to Milestone 10 and require a new
 decision entry before adoption.
+
+## 2026-08-31 — Recipe ingredients are replaced wholesale on save
+
+The Add/Edit Recipe form's ingredient rows are saved via a delete-all-then-
+reinsert for that `recipe_id` (`services/ingredients.replace_recipe_ingredients`),
+not a row-by-row diff against what's in the database. The form always
+submits its full current row list, so this keeps the save path simple and
+avoids tracking per-row database ids in the UI layer. Acceptable given
+recipes have realistically small ingredient counts (a handful to a couple
+dozen rows).
