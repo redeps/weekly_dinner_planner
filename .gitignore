@@ -1,0 +1,15 @@
+# Local data and uploads — never commit household data or photos
+data/
+photos/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Environment
+.venv/
+venv/
+
+# Editor/OS
+.DS_Store
