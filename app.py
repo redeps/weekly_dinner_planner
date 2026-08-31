@@ -17,7 +17,7 @@ st.set_page_config(page_title="Meal Planner", page_icon="🍽️")
 
 def main() -> None:
     st.title("🍽️ Meal Planner")
-    st.caption("Milestone 4 — Plan Generation")
+    st.caption("Milestone 6 — Grocery List")
 
     try:
         conn = get_connection()
@@ -27,9 +27,9 @@ def main() -> None:
         return
 
     st.write(
-        "Recipes, the weekly calendar, and plan generation are up and "
-        "running. The grocery list appears here as later milestones are "
-        "completed — see `docs/ROADMAP.md`."
+        "Recipes, the weekly calendar, plan generation, and the grocery "
+        "list are all up and running — see `docs/ROADMAP.md` for what's "
+        "next."
     )
 
     if st.button("Browse Recipes →"):
@@ -40,6 +40,9 @@ def main() -> None:
 
     if st.button("Week Plan →"):
         st.switch_page("pages/5_Week_Plan.py")
+
+    if st.button("Grocery List →"):
+        st.switch_page("pages/6_Grocery_List.py")
 
 
 if __name__ == "__main__":

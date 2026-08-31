@@ -60,7 +60,7 @@ proving SQLite is reachable.
 - swap respects the same weighting logic (excludes the just-swapped-out
   recipe from its own replacement candidates)
 
-## Milestone 6 — Grocery List ⬜
+## Milestone 6 — Grocery List ✅
 
 - aggregation logic: sum ingredient quantities across the week's recipes
   where units match
