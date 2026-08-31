@@ -123,28 +123,69 @@ Add tests that mock the model call and verify graceful degradation when
 it's unreachable.
 ```
 
-## Milestone 10 — Photos
+## Milestone 10 — Recipe Import (URL + Photo) + Swappable AI Backend
 
 ```
-Implement Milestone 10 from docs/ROADMAP.md: photo upload on the Add/Edit
+Implement Milestone 10 from docs/ROADMAP.md — this is a course-correction
+on Milestone 9, not new scope creep, per docs/DECISIONS.md.
+
+1. Add services/recipe_import.py: given a recipe URL, fetch the page and
+   parse its embedded schema.org/Recipe JSON-LD structured data into a
+   pre-filled Add Recipe draft (name, servings, cook time, ingredients,
+   instructions). Standard library only (urllib, html.parser, json) — do
+   NOT add a third-party scraping package like recipe-scrapers; see
+   docs/DECISIONS.md for why. This becomes the primary URL import path.
+2. The existing AI-assist text parser from Milestone 9 becomes the
+   fallback — used only when a page has no structured data, or the input
+   is pasted free text rather than a URL.
+3. Add photo import: uploading a photo of a cookbook/recipe-card page
+   produces the same pre-filled draft via a vision-capable model call.
+   This path always calls the hosted Gemini backend directly, regardless
+   of what backend is configured for the text-only features below — no
+   local vision model. If no Gemini key is configured, photo import is
+   simply unavailable; nothing else is affected.
+4. Refactor services/ai_assist.py so its text-only capabilities
+   (categorization, swap-intent, shortcut suggestions, unstructured text
+   import) select their backend from configuration/environment: local
+   Ollama, or Google Gemini's free tier — behind the same interface
+   already used by call sites. Keep the photo-import function separate,
+   since it doesn't participate in that selection.
+5. Confirm graceful degradation holds in every combination: no backend
+   configured, Ollama only (photo import still unavailable), Gemini only,
+   both configured.
+6. Update docs/SETUP.md with how to obtain and set a Gemini API key as a
+   secret (never committed) — note it's now relevant for local dev too if
+   photo import is wanted, not just hosted deployment.
+7. Tests: structured-data parsing against a couple of real recipe pages'
+   HTML fixtures, backend-selection logic for the text-only features, and
+   a mocked-response test for the photo-import path.
+
+Follow docs/AGENT_INSTRUCTIONS.md throughout, especially §6 (AI stays
+optional and isolated).
+```
+
+## Milestone 11 — Photos
+
+```
+Implement Milestone 11 from docs/ROADMAP.md: photo upload on the Add/Edit
 Recipe form, resize/compress on save, store under photos/ named by the
 recipe's stable ID, display on recipe cards and detail/day/Cook Mode views,
 and replace/delete. Confirm photos/ stays gitignored.
 ```
 
-## Milestone 11 — Polish
+## Milestone 12 — Polish
 
 ```
-Implement Milestone 11 from docs/ROADMAP.md: mobile UX pass, empty states,
+Implement Milestone 12 from docs/ROADMAP.md: mobile UX pass, empty states,
 confirmation dialogs for destructive actions, a basic accessibility pass,
 expanded test coverage, and a backup/export option (e.g. download the
 SQLite file).
 ```
 
-## Milestone 12 — Hosted Version
+## Milestone 13 — Hosted Version
 
 ```
-Do not run this prompt until Milestones 0–11 are stable and you've decided
+Do not run this prompt until Milestones 0–12 are stable and you've decided
 to move off the local prototype. When ready: propose a hosted architecture
 (managed Postgres, hosted photo storage, auth, migration path from SQLite,
 backups, deployment) as a plan first, get it reviewed, record the decision

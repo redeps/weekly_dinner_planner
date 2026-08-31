@@ -59,11 +59,67 @@ splitting the existing `recipes.instructions` text at render time. Keeps
 the schema unchanged; can be revisited later if a real need for
 individually-orderable, richer steps emerges.
 
+## 2026-08-31 — Structured-data recipe import; swappable AI backend (supersedes the AI-assist entry above)
+
+Two problems were bundled into "AI Assist" that shouldn't have been: import
+friction and language-model-dependent suggestions. Splitting them:
+
+**Recipe import** now has a primary path that needs no model at all:
+parsing `schema.org/Recipe` JSON-LD structured data from a given URL. This
+is deterministic, free, and works identically whether the app is running
+locally or hosted. The AI-assist text parser from Milestone 9 becomes a
+fallback, used only for pasted free text or pages without structured data.
+
+**AI Assist's suggestion features** (categorization, swap-intent, shortcut
+suggestions) still genuinely need a language model and remain optional —
+but the backend is now swappable rather than Ollama-only: local Ollama for
+development (no cost, no key), or Google Gemini's free tier (chosen for
+model quality over Groq/others) when no local model server is reachable,
+e.g. the eventual Milestone 13 hosted deployment. This knowingly relaxes
+"no cloud services" for this one narrow, optional feature — deliberately,
+not by accident. Gemini's free tier is a standing tier (not trial credits)
+and its rate limits comfortably cover a household's occasional use. The API
+key is stored as a secret and never committed.
+
+This was flagged late — after Milestone 9 shipped, not while it was being
+scoped — because the hosted-deployment implication of an Ollama-only design
+wasn't surfaced at design time. Recorded here so the gap and the fix are
+both visible going forward. See Milestone 10 in `docs/ROADMAP.md`.
+
+## 2026-08-31 — Structured-data parser is stdlib-only, no scraping library
+
+The URL import path (above) is implemented as our own small parser using
+only `urllib`, `html.parser`, and `json` — deliberately not a third-party
+scraping package such as `recipe-scrapers`. We only need the generic,
+standardized `schema.org/Recipe` JSON-LD block, not the hundreds of
+site-specific scrapers such a package bundles; those per-site scrapers are
+themselves a maintenance liability (they break whenever a site redesigns,
+and the package has to be kept updated to match). A minimal in-house parser
+targeting a stable published standard is smaller, has nothing to break in
+the same way, and better matches this project's "small, easy to maintain"
+principle than adding a large third-party dependency for a narrow need.
+
+## 2026-08-31 — Photo-based recipe import always uses Gemini
+
+Photo import (for recipes only available on paper — existing cookbooks,
+recipe cards) has no non-AI fallback, unlike URL import. It requires a
+vision-capable model. Rather than supporting a local vision model via
+Ollama, photo import always calls the hosted Gemini backend, regardless of
+which backend is configured for the text-only AI Assist features. A local
+vision-capable model is meaningfully heavier than the text models used
+elsewhere and a poor fit for typical Codespace resources, while Gemini
+handles images as a normal part of its existing free tier. Consequence: if
+no Gemini key is configured, photo import is simply unavailable — every
+other feature, including URL import, is unaffected.
+
 ## 2026-08-31 — Free-first
 
-No paid infrastructure during prototype development (Milestones 0–9).
-Hosted/paid services are deferred to Milestone 10 and require a new
-decision entry before adoption.
+No paid infrastructure during prototype development. Hosted/paid services
+in general are deferred to Milestone 13 (Hosted Version) and require a new
+decision entry before adoption. The one exception, approved and recorded
+above (2026-08-31 — Structured-data recipe import; swappable AI backend),
+is Google Gemini's free tier for two narrow, optional AI Assist paths —
+this doesn't reopen the door to paid infrastructure generally.
 
 ## 2026-08-31 — Recipe ingredients are replaced wholesale on save
 

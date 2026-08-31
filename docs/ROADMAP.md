@@ -102,7 +102,45 @@ after this work was already done — see `DECISIONS.md`.
 - graceful degradation if the local model isn't running (feature hidden or
   disabled, no errors surfaced to the core flow)
 
-## Milestone 10 — Photos ⬜
+## Milestone 10 — Recipe Import (URL + Photo) + Swappable AI Backend ⬜
+
+Course-correction on Milestone 9: recipe import shouldn't depend on a
+model being available at all for the common URL case, suggestion features
+shouldn't go dead the moment the app is hosted, and photo-based import
+from existing cookbooks is a real need. See `docs/PRODUCT_SPEC.md` §16 and
+`docs/DECISIONS.md` for the reasoning.
+
+- `services/recipe_import.py`: fetch a recipe URL, parse embedded
+  `schema.org/Recipe` JSON-LD structured data into a pre-filled Add Recipe
+  draft. **Standard library only — `urllib`, `html.parser`, `json`. No
+  third-party scraping package** (e.g. do not add `recipe-scrapers` or
+  similar; see `docs/DECISIONS.md`). No model call, works with no AI
+  backend configured at all. This becomes the **primary** import path for
+  URLs; the existing AI-assist text parser (Milestone 9) becomes the
+  fallback for pages with no structured data or for pasted free text.
+- photo import: uploading a photo of a cookbook/recipe-card page produces
+  the same pre-filled draft via a vision-capable model call.
+  **This path always uses the hosted Gemini backend, regardless of which
+  backend §16c's text features are configured to use** — no local vision
+  model. If no Gemini key is configured, photo import is simply
+  unavailable; nothing else is affected.
+- refactor `services/ai_assist.py` so the text-only capabilities in §16c
+  (categorization, swap-intent, shortcuts, unstructured text import) select
+  their backend (local Ollama vs. hosted Gemini) from
+  configuration/environment, behind the same interface already in use —
+  no changes needed at call sites. The photo-import function is separate
+  and always calls Gemini directly.
+- confirm graceful degradation holds in all states: no backend configured,
+  Ollama only (photo import still unavailable without a Gemini key),
+  Gemini only, both configured
+- update `docs/SETUP.md` with how to obtain and set a Gemini API key (as a
+  secret, never committed) — now needed for local dev too if photo import
+  is wanted, not just for hosted deployment
+- tests: structured-data parsing against a few real recipe pages' HTML
+  fixtures, backend-selection logic for §16c, and a mocked-response test
+  for the photo-import path
+
+## Milestone 11 — Photos ⬜
 
 - upload a photo when adding/editing a recipe
 - resize/compress on save
@@ -110,7 +148,7 @@ after this work was already done — see `DECISIONS.md`.
 - display photo on recipe cards and detail/day/Cook Mode views
 - replace / delete photo
 
-## Milestone 11 — Polish ⬜
+## Milestone 12 — Polish ⬜
 
 - mobile UX pass
 - empty states (no recipes yet, no plan generated yet, etc.)
@@ -119,7 +157,7 @@ after this work was already done — see `DECISIONS.md`.
 - expand automated test coverage
 - backup/export (e.g. download the SQLite file)
 
-## Milestone 12 — Hosted Version ⬜ (only after Milestones 0–11 are stable)
+## Milestone 13 — Hosted Version ⬜ (only after Milestones 0–12 are stable)
 
 - hosted database (e.g. managed Postgres)
 - hosted photo storage
@@ -130,5 +168,6 @@ after this work was already done — see `DECISIONS.md`.
 - backups
 - deployment
 
-Do not begin this milestone, or introduce any paid service, before the
-local prototype is stable and the earlier milestones are complete.
+Do not begin this milestone, or introduce any paid service beyond the
+already-approved Gemini free tier, before the local prototype is stable and
+the earlier milestones are complete.

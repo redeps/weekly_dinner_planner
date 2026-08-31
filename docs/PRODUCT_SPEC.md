@@ -254,7 +254,9 @@ into each day, "generate new plan" action.
 enjoyment rating, seasonality). Filters: search, season, quick-fallback
 only.
 
-**Add/Edit Recipe** — friendly form:
+**Add/Edit Recipe** — friendly form, optionally pre-filled by pasting a
+URL, pasting free text, or uploading a photo (§16a/16b/16c — always shown
+for review before saving):
 1. photo
 2. name
 3. cook time
@@ -280,40 +282,91 @@ ingredients, instructions, notes, swap action, "Start Cooking" action (§12).
 **Grocery List** — generated, grouped-by-category, read-only view for the
 current week plan.
 
-## 16. AI Assist (Optional, Local)
+## 16. Recipe Import & AI Assist
 
-The app may optionally integrate a locally-run model (e.g. via Ollama) for a
-small set of assistive features. This integration must be **optional and
-non-blocking** — the app is fully usable with it disabled or unreachable;
-features relying on it simply don't appear or fail gracefully.
+Three distinct mechanisms, deliberately separated because they have
+different dependency profiles — some must work everywhere including the
+hosted app, others are a genuine optional enhancement.
 
-In scope:
+### 16a. Recipe Import from URL (structured data — no model dependency)
 
-- **Recipe import** — given pasted recipe text (or a pasted URL's fetched
-  text), extract a structured draft: name, servings, cook time estimate,
-  ingredient lines (name/quantity/unit), and instructions. The result is
-  presented as a pre-filled Add Recipe form for the user to review and
-  confirm — never saved automatically without review.
-- **Ingredient categorization** — when a new ingredient line is added,
-  suggest its `store_category` (produce, dairy, meat, pantry, frozen,
-  other) automatically. The user can override the suggestion.
-- **Swap suggestions with intent** — when swapping a day's recipe, allow a
-  free-text hint (e.g. "vegetarian," "quicker," "use up the broccoli") and
-  let the assist narrow candidate recipes accordingly, on top of the
+The **primary** way to get a recipe into the app from a website with low
+friction: given a recipe URL, fetch the page and parse its embedded
+`schema.org/Recipe` structured data (JSON-LD), which most recipe sites
+already publish for Google's recipe rich-snippets. This extracts name,
+servings, cook time, ingredient lines, and instructions **deterministically
+— no model, no third-party scraping library.** Implemented as a small,
+self-contained parser using only the standard library (`urllib` for the
+fetch, `html.parser` to locate the `<script type="application/ld+json">`
+block, `json` to parse it) — deliberately not a third-party scraping
+package. A package like that would bundle hundreds of site-specific
+scrapers we don't need, each a maintenance liability that breaks whenever
+a site redesigns; the generic JSON-LD block is a stable published standard,
+which is all this needs. Works identically in the Codespace and the hosted
+app. Presented as a pre-filled Add Recipe form for review; never saved
+automatically.
+
+If a page has no structured data, or the input is pasted free text (no
+URL) rather than a link, import falls back to the AI Assist text parser
+(§16c) if a backend is configured, or otherwise asks the user to fill the
+form manually.
+
+### 16b. Recipe Import from Photo (AI Assist, vision)
+
+For recipes that only exist on paper — an existing cookbook, a handwritten
+card — a photo of the page can be sent to a vision-capable AI Assist
+backend with a prompt to extract the same structured draft (name,
+servings, cook time, ingredients, instructions), shown for review exactly
+like the other import paths; never saved automatically. Multiple photos
+(e.g. a recipe spanning two pages) may be supported if straightforward to
+implement — not a hard requirement for the first version.
+
+This inherently requires a model — there is no non-AI fallback for a photo
+the way there is for a URL. **Photo import always uses the hosted Gemini
+backend, even during local development**, regardless of which backend is
+configured for the text-only features in §16c. Reasoning: a local
+vision-capable model is significantly heavier than the text models used
+for §16c and isn't a good fit for typical Codespace resources, whereas
+Gemini handles images natively as part of its normal free tier. If no
+Gemini API key is configured, photo import is simply unavailable — the
+rest of the app, including URL import (§16a), is unaffected.
+
+### 16c. AI Assist — suggestions (optional, swappable backend)
+
+A small set of features that genuinely need a language model:
+
+- **Unstructured recipe import fallback** — parsing free-form pasted text
+  or a URL with no structured data, per §16a.
+- **Ingredient categorization** — suggest a new ingredient's
+  `store_category` (produce, dairy, meat, pantry, frozen, other),
+  overridable.
+- **Swap suggestions with intent** — a free-text hint (e.g. "vegetarian,"
+  "quicker," "use up the broccoli") narrows swap candidates on top of the
   normal weighting in §9.
-- **Shortcut suggestions** — for a given recipe or day, suggest simple
-  effort-saving substitutions (e.g. "use frozen chopped veg instead of
-  fresh," "pre-minced garlic") as optional text shown alongside the
-  recipe, not stored as a permanent change to the recipe itself.
+- **Shortcut suggestions** — simple effort-saving substitutions (e.g. "use
+  frozen chopped veg instead of fresh") shown alongside a recipe, never
+  persisted as a change to the recipe itself.
 
-Out of scope: generating entirely new recipes from nothing, nutrition/
-calorie analysis, and anything that writes to the database without the user
-reviewing/confirming the result first.
+This must remain **optional and non-blocking** — the app is fully usable
+with no backend configured; features relying on it simply don't appear or
+fail gracefully.
 
-Architecture: implemented as a separate, isolated service module (see
-`docs/DATA_MODEL.md`), called only when the relevant screen is used. No core
-screen (recipes, plan generation, grocery list) depends on this module being
-available.
+**Backend is swappable per §16c capability, chosen by configuration:**
+
+- **Local** — Ollama, reachable at a local HTTP endpoint. No API key, no
+  cost, no data leaving the machine. Default for development in the
+  Codespace.
+- **Hosted** — Google Gemini's free tier (chosen for model quality — see
+  `docs/DECISIONS.md`), reachable via an API key stored as a secret, never
+  committed. Used where a local model server isn't available, e.g. the
+  hosted deployment from Milestone 13 — and always for photo import (§16b),
+  regardless of this setting.
+
+`services/ai_assist.py` exposes one interface regardless of backend; which
+backend is active for §16c is read from configuration/environment at
+startup, while §16b's photo path is hardcoded to Gemini per above. Every
+call path degrades gracefully — a missing/unreachable backend disables the
+relevant feature, it does not error the surrounding screen.
 
 ## 17. Database Model
 
@@ -325,7 +378,7 @@ may vary, but these concepts and their separation of concerns must remain.
 ## 18. Roadmap
 
 See `docs/ROADMAP.md` for the full milestone breakdown (Milestone 0 through
-Milestone 12). Work proceeds one milestone at a time — see
+Milestone 13). Work proceeds one milestone at a time — see
 `docs/AGENT_INSTRUCTIONS.md`.
 
 ## 19–20. Agent Rules and Prompts
