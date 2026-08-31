@@ -98,18 +98,27 @@ presentation-only feature, not a new data structure. If a future need
 arises for structured, individually-orderable steps, that would be a new
 decision and a new table — do not add one speculatively now.
 
-## AI Assist (Optional)
+## Recipe Import & AI Assist (Optional)
 
-No new persistent tables are required for this. The AI-assist module (see
-`PRODUCT_SPEC.md` §15) is a service-layer helper only:
+No new persistent tables are required for any of these (see
+`PRODUCT_SPEC.md` §16):
 
-- recipe import produces a draft that, once the user confirms it, is written
-  through the normal `recipes` / `recipe_ingredients` insert path — no
-  separate "draft" table
+- URL import (stdlib-only JSON-LD parser), photo import, and the AI-assist
+  text fallback all produce a draft that, once the user confirms it, is
+  written through the normal `recipes` / `recipe_ingredients` insert path
+  — no separate "draft" table
+- the photo used for import is **not** automatically saved as the recipe's
+  `photo_path` — that's Milestone 11's concern (photo upload/storage).
+  Import and photo storage are separate features that happen to both touch
+  images; don't wire them together prematurely just because both exist
 - ingredient categorization only suggests a value for
   `recipe_ingredients.store_category` before the row is saved
 - swap-intent and shortcut suggestions are computed on request and are not
   stored
+- which AI-assist backend is active for text features (local Ollama vs.
+  hosted Gemini) is runtime configuration/environment, not a database
+  concern — no "providers" table. Photo import's backend is not
+  configurable (always Gemini, see `docs/DECISIONS.md`)
 
 If a future milestone needs to cache import results or model output, add a
 decision entry and a table then — do not add one speculatively now.
