@@ -20,7 +20,7 @@ Explicitly **not** in Milestone 0: recipes, ingredients, plans, calendar
 input, grocery list, history, photos. No app schema is created yet beyond
 proving SQLite is reachable.
 
-## Milestone 1 — Core Recipes ⬜
+## Milestone 1 — Core Recipes ✅
 
 - `recipes` table (name, photo, cook_time_minutes, family_enjoyment,
   seasonality, is_quick_fallback, servings, instructions, notes)
