@@ -80,6 +80,16 @@ class PlanDay:
     recipe_id: Optional[int]
 
 
+@dataclass
+class CookHistoryEntry:
+    id: int
+    recipe_id: int
+    recipe_name: str
+    plan_day_id: Optional[int]
+    cooked_on: str
+    created_at: str
+
+
 def create_recipes_table(conn: sqlite3.Connection) -> None:
     """Create the `recipes` table if it doesn't already exist."""
     conn.execute(

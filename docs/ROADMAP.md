@@ -67,7 +67,7 @@ proving SQLite is reachable.
 - grouped-by-store-category read-only list view
 - regenerates automatically when a day is swapped
 
-## Milestone 7 — Cook History ⬜
+## Milestone 7 — Cook History ✅
 
 - `cook_history` table populated by a `finalize_plan()` / `mark_day_cooked()`
   service function (never by UI rendering — see `AGENT_INSTRUCTIONS.md`)

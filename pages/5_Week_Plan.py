@@ -10,6 +10,7 @@ import streamlit as st
 from database import get_connection
 from models import DAYS_OF_WEEK
 from services.calendar import build_default_week_calendar
+from services.cook_history import finalize_plan, has_been_cooked, mark_day_cooked
 from services.plan_generation import (
     generate_week_plan,
     get_latest_week_plan,
@@ -51,10 +52,14 @@ if not week_plan:
 
 st.caption(f"Week of {week_plan.week_start_date}")
 
+if st.button("Finalize Plan (mark all cooked)"):
+    finalize_plan(conn, week_plan.id)
+    st.rerun()
+
 for plan_day in list_plan_days(conn, week_plan.id):
     recipe = get_recipe(conn, plan_day.recipe_id) if plan_day.recipe_id else None
     with st.container(border=True):
-        cols = st.columns([1, 3, 1, 1])
+        cols = st.columns([1, 3, 1, 1, 1.3])
         cols[0].write(f"**{plan_day.day_of_week.capitalize()}**")
         cols[0].caption(plan_day.date)
         if recipe:
@@ -74,5 +79,10 @@ for plan_day in list_plan_days(conn, week_plan.id):
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))
+            if has_been_cooked(conn, plan_day.id):
+                cols[4].write("✓ Cooked")
+            elif cols[4].button("Mark Cooked", key=f"mark_cooked_{plan_day.id}"):
+                mark_day_cooked(conn, plan_day.id)
+                st.rerun()
         else:
             cols[1].write("_No recipe assigned._")
