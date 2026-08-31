@@ -132,12 +132,15 @@ it.
 4. Copy the key immediately. It's shown only once; if you lose it, you'll
    need to create a new one. It starts with `AIza`.
 
-**b. Restrict the key (recommended)**
+**b. Restriction is automatic — just confirm it**
 
-On the API Keys page in AI Studio, open the new key and restrict it to the
-**Generative Language API** only. This limits the damage if the key is
-ever leaked — a compromised unrestricted key can be used against other
-Google APIs on the same project, not just Gemini.
+As of 2026, keys created in AI Studio are restricted to the Generative
+Language API by default at creation time — there's no manual restriction
+step to click through. On the API Keys page, check the **Key Type** column
+for your key: anything other than "Standard" is fine. If it says
+"Standard" (an older key type Google is phasing out — these stop working
+entirely in September 2026), delete it and click **Create API key** again;
+new keys default to the safer type automatically.
 
 **c. Add it to your Codespace as a secret — never commit it**
 
