@@ -1,0 +1,52 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: meal_planner
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write CI-only Streamlit secrets
+        # .streamlit/secrets.toml is gitignored — never committed — so CI
+        # writes its own, pointed at the postgres service container above.
+        # Matches the local-dev DSN convention (postgresql://postgres@
+        # localhost:5432/meal_planner, no password) from docs/SETUP.md —
+        # the service container's POSTGRES_HOST_AUTH_METHOD: trust above is
+        # what makes that same no-password DSN work here too. No
+        # HOUSEHOLD_PASSWORD/GEMINI_API_KEY/[r2] needed: tests that touch
+        # auth or R2 mock those directly rather than reading real secrets.
+        run: |
+          mkdir -p .streamlit
+          cat > .streamlit/secrets.toml <<EOF
+          [postgres]
+          dsn = "postgresql://postgres@localhost:5432/meal_planner"
+          EOF
+
+      - name: Run pytest
+        run: pytest -q
