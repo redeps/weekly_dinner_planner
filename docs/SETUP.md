@@ -211,10 +211,73 @@ is already decided and implemented (step 11 above) — the two approved
 exceptions to "no paid/cloud dependency yet" are Gemini's free tier (step
 10) and this passphrase gate's eventual public-repo requirement (step
 11); don't add any other paid service or cloud dependency before
-Milestone 13 is actually underway. Whatever database/storage platform is
-chosen then will have its own secret-storage mechanism (e.g. environment
-variables or a secrets manager in its dashboard) — the same
-never-commit rule applies there too.
+Milestone 13 is actually underway.
+
+The rest of Milestone 13's architecture is decided (see
+`docs/DECISIONS.md` and `docs/ROADMAP.md`'s Phase 1-6 breakdown) but not
+yet implemented. Setup steps below are written ahead of time so Phase 1
+implementation has somewhere to point back to — none of this exists yet.
+
+**Local dev (Phase 1, not yet implemented): Postgres runs locally in the
+devcontainer, not Neon.** `.devcontainer/devcontainer.json` doesn't exist
+yet in this repo (confirmed via `git log --all` — it's never been
+created) — Phase 1 creates it, with a `postCreateCommand` that installs
+Postgres via `apt-get install postgresql` and creates a local dev/test
+database. Local dev and tests will only ever talk to this local instance;
+the deployed app is the only thing that talks to Neon. Once Phase 1
+lands, `.streamlit/secrets.toml` will need a `[postgres]` section
+pointing at that local instance, e.g.:
+
+```toml
+[postgres]
+dsn = "postgresql://postgres@localhost:5432/meal_planner"
+```
+
+**Photo storage (Phase 3, not yet implemented):** Cloudflare R2 via
+`boto3`. Once implemented, `.streamlit/secrets.toml` will need an `[r2]`
+section:
+
+```toml
+[r2]
+endpoint_url = "https://<account-id>.r2.cloudflarestorage.com"
+access_key_id = "..."
+secret_access_key = "..."
+bucket_name = "meal-planner-photos"
+```
+
+**Hosted deployment (Phase 4, remaining part not yet implemented):** the
+app deploys as a **public** app on Streamlit Community Cloud, from a
+**public** GitHub repo (the free tier's one private-app slot is already
+used by the sibling home-inventory app) — protected by the passphrase
+gate instead of Streamlit's private-app mechanism. The repo is still
+private and nothing is deployed yet; both happen only once Phase 4 is
+actually underway. When it is, the deployed app's secrets (set via that
+app's **Settings → Secrets**, same TOML format as above, never committed)
+will need: `HOUSEHOLD_PASSWORD`, `GEMINI_API_KEY`, a `[postgres]` section
+with the **production Neon** DSN (not the local one above), and an `[r2]`
+section with the real R2 credentials.
+
+This is the one place all four secrets converge into a single box, so
+the exact shape matters — the two root-level keys **must** go before
+either `[section]` header, same rule as step 11:
+
+```toml
+HOUSEHOLD_PASSWORD = "choose-a-real-passphrase-here"
+GEMINI_API_KEY = "AIza..."
+
+[postgres]
+dsn = "postgresql://<user>:<password>@<neon-host>/<db>?sslmode=require"
+
+[r2]
+endpoint_url = "https://<account-id>.r2.cloudflarestorage.com"
+access_key_id = "..."
+secret_access_key = "..."
+bucket_name = "meal-planner-photos"
+```
+
+Whatever platform specifics change between now and Phase 1/3/4 actually
+starting, the same never-commit-a-secret rule from steps 10-11 applies to
+all of these too.
 
 ## Quick reference
 

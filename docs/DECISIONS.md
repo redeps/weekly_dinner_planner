@@ -397,3 +397,125 @@ conflict) discovered while planning deployment. The repository's
 visibility has not been changed and nothing has been deployed yet —
 implementing and locally verifying this gate was the explicit prerequisite
 before either happens.
+
+## 2026-08-31 — Milestone 13 hosting architecture (Neon + Streamlit Community Cloud)
+
+The rest of Milestone 13, deferred by the entry above: settled over
+several rounds of planning (not all committed to disk as they happened —
+this entry is the catch-up record). Matches the stack already running a
+sibling household app ("home-inventory"), reusing its proven patterns
+directly rather than designing new ones from scratch, and keeping one
+vendor/stack across both apps instead of two.
+
+**Vendor/stack: Neon (Postgres) + Streamlit Community Cloud.** Supabase
+and Turso (hosted SQLite) were both considered and rejected in favor of
+matching home-inventory. meal-planner gets its **own separate Neon
+project** — not shared with home-inventory, so schema-migration history
+and connection limits stay independent between the two apps. "Same
+stack" means same vendor and same code pattern, not a shared database.
+
+**Local dev: local Postgres installed via `apt` in the devcontainer —
+not a Neon development branch.** A development-branch approach was
+proposed and then reversed during planning: local dev never touches
+Neon at all, only the deployed Streamlit Cloud app does, so Neon's
+project only needs its default/production branch. This keeps "must run
+entirely inside a Codespace with no external services" true for local
+dev rather than opening an exception for it. `.devcontainer/` does not
+exist yet in this repository — confirmed via `git log --all` (no commit,
+on any ref, has ever touched it) and `ls -la` (not present on disk) — so
+Phase 1 (below) creates `.devcontainer/devcontainer.json` from scratch,
+it doesn't edit an existing one.
+
+**Reliability — two distinct things, not one:** Neon's free-tier
+autosuspend wakes in ~300-800ms (compute suspends when idle; data is
+never lost), which resolves the "reachable from my phone reliably"
+concern. Streamlit Community Cloud's own app-sleep (~30-60s wake after
+a period with no visitors) is a separate mechanism this doesn't touch —
+still a real, minor friction on an infrequently-visited household app,
+just not a database problem.
+
+**Schema management: port home-inventory's exact pattern.** A
+`SCHEMA_MIGRATIONS: list[tuple[int, str]]` of versioned, additive SQL
+blocks, a one-row `schema_version` table, and `_apply_migrations(conn)`
+called from `get_connection()` — applying anything newer than the
+current recorded version. Lives in `database.py` (matching
+home-inventory's file organization); this replaces meal-planner's
+current per-table `create_recipes_table()`-style idempotent-DDL
+functions. `models.py` keeps the dataclasses and constants only.
+
+**Column types — match home-inventory's conventions, verified against
+what meal-planner's own code already assumes (re-confirmed via `grep`
+while writing this entry, since it had been a few rounds since this was
+first checked):**
+- Booleans (`is_quick_fallback`, `active`, `is_busy`) stay `INTEGER` 0/1,
+  not native `BOOLEAN`. `services/recipes.py` and
+  `services/plan_generation.py` already do
+  `bool(row["is_quick_fallback"])`, `bool(row["active"])`,
+  `bool(row["is_busy"])` at the row-mapping boundary — matching
+  home-inventory costs zero changes to that code.
+- `created_at`, `updated_at`, `plan_days.date`, `cook_history.cooked_on`,
+  `week_plans.week_start_date`, and `plan_days.dinner_ready_time` all
+  stay `TEXT`, not native `TIMESTAMPTZ`/`DATE`/`TIME`.
+  `services/plan_generation.py` and `services/cook_history.py` already
+  do `dt.date.fromisoformat(row[...])` / `.isoformat()` throughout for
+  real date arithmetic (rotation window, sorting) — every date-shaped
+  column in the schema gets the same treatment, not just the ones
+  home-inventory happened to have.
+- Primary keys: `SERIAL`, matching home-inventory (not
+  `GENERATED ALWAYS AS IDENTITY` — purely stylistic, no reason to diverge).
+
+**Secrets: DSN via `st.secrets["postgres"]["dsn"]`**, matching
+home-inventory — `.streamlit/secrets.toml` locally (gitignored),
+Streamlit Community Cloud's secrets manager when deployed. This now
+coexists with two other, deliberately different, secret-reading
+conventions already in the codebase: `HOUSEHOLD_PASSWORD` (also
+`st.secrets`, but root-level, not nested — see the auth entry above) and
+`GEMINI_API_KEY` (plain `os.environ`, per the AI Assist entries above).
+Not being unified in this pass — three conventions in one small app is
+inelegant, but each was deliberately matched to a specific existing
+pattern (Postgres and the passphrase both mirror `st.secrets` usage
+from elsewhere; `GEMINI_API_KEY` predates the other two and changing it
+now would touch working, tested code for no functional benefit).
+
+**Test isolation: port `schema_name_for(identity)`** — a per-test
+Postgres *schema* (not a separate database, not SQLite `:memory:`),
+keyed by a hash of an arbitrary identity (e.g. pytest's `tmp_path`),
+created on first use. `get_connection()` defaults to the `public` schema
+(real data) when no identity is given.
+
+**Photo storage: Cloudflare R2, via `boto3`** — matching home-inventory
+exactly. `boto3` client (the standard AWS SDK, speaks any S3-compatible
+API including R2) against `st.secrets["r2"]` (`endpoint_url`,
+credentials, bucket name), object keys shaped `photos/<recipe_id>.jpg` —
+the same naming `services/photos.py` already uses locally
+(`photo_relative_path()`), so the key scheme carries over unchanged.
+Backblaze B2 is the documented fallback if a Cloudflare card-on-file is
+ever unwanted — same `boto3` code works against either, since both
+speak the S3 API. `services/photos.py` keeps its swappable local/hosted
+backend design: local filesystem for the local-Postgres-backed dev
+environment above, unchanged; R2 for production.
+
+**Deliberate exception to the "avoid new SDK dependencies" precedent:**
+`services/ai_assist.py` avoided the `ollama`/`google-genai` SDKs in
+favor of raw `urllib` calls (see the AI Assist entries above) because
+those are simple bearer-token REST calls. S3-compatible APIs require
+request signing (AWS Signature V4), which is genuinely risky to
+hand-roll versus reusing `boto3` — a different calculus, not an
+inconsistency, and matching a proven working implementation
+(home-inventory's) is further reason not to reinvent it. `requirements.txt`
+will gain `boto3` when Phase 3 is implemented.
+
+**Roadmap phases for the rest of Milestone 13** (see `docs/ROADMAP.md`
+for the up-to-date checklist): Phase 1 (local Postgres in the
+devcontainer + the migrations/`schema_version` pattern for
+meal-planner's five tables), Phase 2 (migrate `services/recipes.py`,
+`services/ingredients.py`, `services/plan_generation.py`,
+`services/cook_history.py` to `psycopg`/`%s` placeholders), Phase 3
+(photo storage via `boto3`/R2), Phase 4 (auth gate — **done**, see the
+entry above — plus CI and deploying as a public app from a public repo,
+pointed at Neon's production branch), Phase 5 (one-time data migration:
+local SQLite → Neon, local `photos/` → R2), Phase 6 (backups: pure-Python
+per-table CSV/zip export, no `pg_dump`). None of Phases 1, 2, 3, 5, or 6
+are implemented yet — this entry is docs only, recording the settled
+design so implementation can proceed phase by phase against a written
+plan instead of relying on conversation history.

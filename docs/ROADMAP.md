@@ -159,19 +159,36 @@ from existing cookbooks is a real need. See `docs/PRODUCT_SPEC.md` §16 and
 
 ## Milestone 13 — Hosted Version ⬜ (only after Milestones 0–12 are stable)
 
-- hosted database (e.g. managed Postgres)
-- hosted photo storage
-- authentication / access control — **decided:** an in-app household
-  passphrase gate (`services/auth.py`, implemented), not Streamlit
-  Community Cloud's private-app mechanism — see `docs/DECISIONS.md`.
-  Deploys as a **public** app from a **public** repo as a result; the
-  repo's visibility hasn't been changed yet, and nothing has been
-  deployed — both are still pending
-- remote access so the grocery list / plan is reachable away from home, if
-  ever wanted
-- migration path from SQLite to the hosted database
-- backups
-- deployment
+Architecture decided (Neon + Streamlit Community Cloud, matching the
+sibling "home-inventory" app) — see `docs/DECISIONS.md` for the full
+reasoning. Broken into six phases, worked one at a time:
+
+- **Phase 1 — Local Postgres:** add Postgres to `.devcontainer/`
+  (installed via `apt`, not Neon branching — dev/test never touch Neon).
+  Port home-inventory's `SCHEMA_MIGRATIONS`/`schema_version`/
+  `_apply_migrations` pattern into `database.py` for the five existing
+  tables (`recipes`, `recipe_ingredients`, `week_plans`, `plan_days`,
+  `cook_history`), replacing `models.py`'s per-table
+  `create_*_table()` functions. `models.py` keeps dataclasses/constants
+  only.
+- **Phase 2 — Service layer migration:** migrate `services/recipes.py`,
+  `services/ingredients.py`, `services/plan_generation.py`,
+  `services/cook_history.py` from `sqlite3` to `psycopg`/`%s`
+  placeholders.
+- **Phase 3 — Photo storage:** Cloudflare R2 via `boto3`, matching
+  `services/photos.py`'s existing `photo_relative_path()` key scheme.
+- **Phase 4 — Auth + deployment ✅ auth done:** in-app household
+  passphrase gate (`services/auth.py`, implemented) instead of
+  Streamlit Community Cloud's private-app mechanism, since the free
+  tier allows only one private app (already used by home-inventory) —
+  see `docs/DECISIONS.md`. Deploys as a **public** app from a
+  **public** repo as a result. Still pending in this phase: CI, making
+  the repo public, and the actual deploy against Neon's production
+  branch.
+- **Phase 5 — One-time data migration:** local SQLite → Neon, local
+  `photos/` → R2.
+- **Phase 6 — Backups:** pure-Python per-table CSV/zip export (no
+  `pg_dump`).
 
 Do not begin this milestone, or introduce any paid service beyond the
 already-approved Gemini free tier, before the local prototype is stable and

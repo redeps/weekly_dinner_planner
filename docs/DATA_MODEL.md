@@ -123,6 +123,25 @@ No new persistent tables are required for any of these (see
 If a future milestone needs to cache import results or model output, add a
 decision entry and a table then — do not add one speculatively now.
 
+## Postgres column types (Milestone 13, hosted version)
+
+The conceptual types above (`boolean`, `timestamp`, `date`, `time`) map to
+specific Postgres column types when Milestone 13 Phase 1 ports the schema
+— chosen to match the sibling "home-inventory" app's conventions, and
+confirmed (via `grep` against `services/*.py`) to require zero changes to
+the existing service layer. See `docs/DECISIONS.md` for the full reasoning.
+
+| conceptual type | Postgres type | notes |
+|---|---|---|
+| `integer PK` | `SERIAL` | not `GENERATED ALWAYS AS IDENTITY` — stylistic, matches home-inventory |
+| `boolean` (`is_quick_fallback`, `active`, `is_busy`) | `INTEGER` (0/1) | not native `BOOLEAN` — existing code already does `bool(row["..."])` at the row-mapping boundary |
+| `timestamp` (`created_at`, `updated_at`) | `TEXT` | not native `TIMESTAMPTZ` |
+| `date` (`week_start_date`, `plan_days.date`, `cooked_on`) | `TEXT` | not native `DATE` — existing code already does `dt.date.fromisoformat(row["..."])` |
+| `time` (`dinner_ready_time`) | `TEXT` | not native `TIME` |
+
+This applies to all five existing tables unchanged — no columns are added,
+removed, or renamed as part of the Postgres migration.
+
 ## Entity relationship summary
 
 ```

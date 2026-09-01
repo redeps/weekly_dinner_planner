@@ -54,23 +54,34 @@ Prototype stack:
 
 Must run entirely inside a GitHub Codespace with no cloud services required.
 
-Potential future architecture (NOT built now — see Milestone 9):
+Decided future architecture (NOT built now, except the auth gate — see
+Milestone 13 and `docs/DECISIONS.md`):
 
 ```
-GitHub
+GitHub (public repo)
   |
   v
-Streamlit application
+Streamlit Community Cloud (public app)
   |
-  +-- hosted PostgreSQL database
+  +-- household passphrase gate (services/auth.py) — implemented
   |
-  +-- hosted photo/file storage
+  +-- Neon (hosted Postgres)
   |
-  +-- remote access (so the grocery list is reachable away from home)
+  +-- Cloudflare R2 (hosted photo storage, via boto3)
 ```
 
-Do not implement the hosted architecture until the local prototype is stable
-and Milestones 0–8 are complete.
+Streamlit Community Cloud's free tier allows only one *private* app,
+already used by a sibling household app — so this app deploys as a
+**public** app from a **public** repo instead, protected by the
+passphrase gate. Local dev stays fully Codespace-only: it uses a local
+Postgres instance in the devcontainer, not Neon — only the deployed app
+talks to Neon and R2. See `docs/DECISIONS.md` for the full reasoning
+(vendor choice, local-dev approach, column-type conventions, photo
+storage).
+
+Do not implement the rest of the hosted architecture (Phases 1, 2, 3, 5,
+6 — see `docs/ROADMAP.md`) until the local prototype is stable and
+Milestones 0–12 are complete.
 
 ## 4. Project Structure
 
