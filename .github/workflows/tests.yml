@@ -49,4 +49,11 @@ jobs:
           EOF
 
       - name: Run pytest
-        run: pytest -q
+        # python -m pytest, not bare `pytest`: -m adds the checkout's root
+        # (this invocation's CWD) to sys.path[0], which is what makes
+        # `import database` / `from services import ...` resolve — bare
+        # `pytest` relies on its own rootdir-conftest insertion instead,
+        # which only puts tests/ on sys.path (no top-level __init__.py
+        # there), not the repo root. Matches every local pytest invocation
+        # throughout this project's history.
+        run: python -m pytest -q
