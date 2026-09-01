@@ -2,26 +2,21 @@
 Milestone 6 tests: grocery list aggregation (services/grocery_list.py).
 """
 
-import sqlite3
-
 import pytest
 
-import models
+import database
 from services import grocery_list as grocery_service
 from services import ingredients as ingredient_service
 from services import recipes as recipe_service
 
 
 @pytest.fixture
-def conn():
-    connection = sqlite3.connect(":memory:")
-    connection.execute("PRAGMA foreign_keys = ON")
-    models.create_recipes_table(connection)
-    models.create_recipe_ingredients_table(connection)
-    models.create_week_plans_table(connection)
-    models.create_plan_days_table(connection)
-    models.create_cook_history_table(connection)
+def conn(tmp_path):
+    connection = database.get_connection(identity=tmp_path)
     yield connection
+    schema = database.schema_name_for(tmp_path)
+    connection.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    connection.commit()
     connection.close()
 
 
@@ -42,13 +37,13 @@ def make_recipe(conn, name="Recipe", ingredients=None):
 def make_week_plan(conn, day_recipe_pairs, week_start="2026-08-31"):
     """day_recipe_pairs: list of (day_of_week, recipe_id_or_None)."""
     week_plan_id = conn.execute(
-        "INSERT INTO week_plans (week_start_date) VALUES (?)", (week_start,)
-    ).lastrowid
+        "INSERT INTO week_plans (week_start_date) VALUES (%s) RETURNING id", (week_start,)
+    ).fetchone()[0]
     for i, (day_of_week, recipe_id) in enumerate(day_recipe_pairs):
         conn.execute(
             """
             INSERT INTO plan_days (week_plan_id, day_of_week, date, is_busy, dinner_ready_time, recipe_id)
-            VALUES (?, ?, ?, 0, '18:00', ?)
+            VALUES (%s, %s, %s, 0, '18:00', %s)
             """,
             (week_plan_id, day_of_week, f"2026-08-{i + 1:02d}", recipe_id),
         )

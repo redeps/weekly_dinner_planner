@@ -1,25 +1,29 @@
 """
-Milestone 0 tests: prove the project is wired together correctly.
-
-Does NOT test application schema — there isn't one yet. See
-docs/ROADMAP.md — Milestone 1 adds the first real schema tests.
+Milestone 0 tests, updated for Milestone 13 Phase 1: prove the Postgres
+connection layer — schema migrations and per-test schema isolation — is
+wired together correctly. See docs/DECISIONS.md — Milestone 13 hosting
+architecture.
 """
 
-import sqlite3
-from pathlib import Path
+import io
+import zipfile
+
+import psycopg
 
 import database
 
 
-def test_get_connection_returns_sqlite_connection():
+def test_get_connection_returns_postgres_connection():
     conn = database.get_connection()
-    assert isinstance(conn, sqlite3.Connection)
+    assert isinstance(conn, psycopg.Connection)
     conn.close()
 
 
-def test_get_connection_creates_data_directory():
-    database.get_connection()
-    assert database.DATA_DIR.exists()
+def test_get_connection_defaults_to_public_schema():
+    conn = database.get_connection()
+    schema = conn.execute("SELECT current_schema()").fetchone()[0]
+    conn.close()
+    assert schema == "public"
 
 
 def test_database_is_reachable():
@@ -29,21 +33,43 @@ def test_database_is_reachable():
     conn.close()
 
 
-def test_db_file_created_under_data_dir():
-    database.get_connection()
-    assert database.DB_PATH.parent == database.DATA_DIR
-    assert database.DB_PATH.exists()
+def test_get_connection_with_identity_uses_isolated_schema(tmp_path):
+    conn = database.get_connection(identity=tmp_path)
+    schema = conn.execute("SELECT current_schema()").fetchone()[0]
+    conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    conn.close()
+    assert schema == database.schema_name_for(tmp_path)
 
 
-def test_export_database_bytes_returns_valid_sqlite_file():
+def test_get_connection_applies_schema_migrations(tmp_path):
+    conn = database.get_connection(identity=tmp_path)
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = current_schema()"
+        ).fetchall()
+    }
+    schema = database.schema_name_for(tmp_path)
+    conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    conn.close()
+    assert {
+        "recipes",
+        "recipe_ingredients",
+        "week_plans",
+        "plan_days",
+        "cook_history",
+        "schema_version",
+    } <= tables
+
+
+def test_export_database_bytes_returns_valid_zip_file():
     database.get_connection()  # ensure the schema exists
     exported = database.export_database_bytes()
-    assert exported[:16] == b"SQLite format 3\x00"
+    assert exported[:4] == b"PK\x03\x04"
 
 
 def test_export_database_bytes_reflects_current_data(tmp_path, monkeypatch):
-    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(database, "TEST_SCHEMA_IDENTITY", tmp_path)
 
     conn = database.get_connection()
     conn.execute(
@@ -52,20 +78,17 @@ def test_export_database_bytes_reflects_current_data(tmp_path, monkeypatch):
         VALUES ('Export Test Recipe', 10, 3, 'all-season', 2)
         """
     )
-    conn.commit()
-    conn.close()
 
     exported = database.export_database_bytes()
-    backup_path = tmp_path / "exported.db"
-    backup_path.write_bytes(exported)
 
-    backup_conn = sqlite3.connect(backup_path)
-    names = [
-        row[0]
-        for row in backup_conn.execute("SELECT name FROM recipes WHERE name = 'Export Test Recipe'")
-    ]
-    backup_conn.close()
-    assert names == ["Export Test Recipe"]
+    with zipfile.ZipFile(io.BytesIO(exported)) as zf:
+        recipes_csv = zf.read("recipes.csv").decode()
+
+    schema = database.schema_name_for(tmp_path)
+    conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    conn.close()
+
+    assert "Export Test Recipe" in recipes_csv
 
 
 def test_export_database_bytes_does_not_modify_original():

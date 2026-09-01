@@ -1,25 +1,25 @@
 """
 Milestone 2 tests: ingredient service functions (services/ingredients.py).
 
-Uses an isolated in-memory database per test — never touches data/.
+Uses an isolated per-test Postgres schema — never touches the `public`
+schema. See docs/DECISIONS.md — Milestone 13 hosting architecture.
 """
 
-import sqlite3
-
+import psycopg
 import pytest
 
-import models
+import database
 from services import ingredients as ingredient_service
 from services import recipes as recipe_service
 
 
 @pytest.fixture
-def conn():
-    connection = sqlite3.connect(":memory:")
-    connection.execute("PRAGMA foreign_keys = ON")
-    models.create_recipes_table(connection)
-    models.create_recipe_ingredients_table(connection)
+def conn(tmp_path):
+    connection = database.get_connection(identity=tmp_path)
     yield connection
+    schema = database.schema_name_for(tmp_path)
+    connection.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    connection.commit()
     connection.close()
 
 
@@ -106,6 +106,40 @@ def test_replace_recipe_ingredients_with_empty_list_clears_all(conn, recipe_id):
     )
     ingredient_service.replace_recipe_ingredients(conn, recipe_id, [])
     assert ingredient_service.list_ingredients(conn, recipe_id) == []
+
+
+def test_replace_recipe_ingredients_db_failure_partway_through_reinsert_leaves_original_intact(
+    conn, recipe_id
+):
+    """The Python-level store_category check
+    (test_replace_recipe_ingredients_invalid_row_leaves_existing_rows_untouched,
+    above) never reaches the database at all, so it can't prove the
+    delete-all-then-reinsert sequence is transactionally atomic. This test
+    forces a failure the database itself raises (a NOT NULL violation, not
+    caught by _validate_store_category) partway through the reinsert loop
+    — proving services/ingredients.py's `with conn.transaction():` wrap
+    (see docs/DECISIONS.md) rolls back the whole delete+reinsert, not just
+    the one bad row, under autocommit=True."""
+    ingredient_service.replace_recipe_ingredients(
+        conn, recipe_id, [{"name": "onion", "store_category": "produce"}]
+    )
+
+    with pytest.raises(psycopg.Error):
+        ingredient_service.replace_recipe_ingredients(
+            conn,
+            recipe_id,
+            [
+                {"name": "garlic", "store_category": "produce"},
+                {"name": None, "store_category": "produce"},  # violates NOT NULL at the DB
+                {"name": "carrot", "store_category": "produce"},
+            ],
+        )
+
+    rows = ingredient_service.list_ingredients(conn, recipe_id)
+    assert [r.name for r in rows] == ["onion"], (
+        "a DB failure partway through the reinsert must leave the original "
+        "ingredients intact, not a partial or empty set"
+    )
 
 
 def test_replace_recipe_ingredients_only_affects_its_own_recipe(conn, recipe_id):

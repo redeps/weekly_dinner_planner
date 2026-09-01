@@ -5,10 +5,10 @@ Milestone 4 tests: plan generation scoring and generation
 
 import datetime as dt
 import random
-import sqlite3
 
 import pytest
 
+import database
 import models
 from models import CalendarDay
 from services import plan_generation as plan_service
@@ -16,15 +16,12 @@ from services import recipes as recipe_service
 
 
 @pytest.fixture
-def conn():
-    connection = sqlite3.connect(":memory:")
-    connection.execute("PRAGMA foreign_keys = ON")
-    models.create_recipes_table(connection)
-    models.create_recipe_ingredients_table(connection)
-    models.create_week_plans_table(connection)
-    models.create_plan_days_table(connection)
-    models.create_cook_history_table(connection)
+def conn(tmp_path):
+    connection = database.get_connection(identity=tmp_path)
     yield connection
+    schema = database.schema_name_for(tmp_path)
+    connection.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    connection.commit()
     connection.close()
 
 
@@ -78,11 +75,11 @@ def test_last_cooked_dates_empty_table(conn):
 def test_last_cooked_dates_returns_max_per_recipe(conn):
     recipe = make_recipe(conn)
     conn.execute(
-        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (?, ?)",
+        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (%s, %s)",
         (recipe.id, "2026-08-01"),
     )
     conn.execute(
-        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (?, ?)",
+        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (%s, %s)",
         (recipe.id, "2026-08-20"),
     )
     conn.commit()
@@ -288,6 +285,42 @@ def test_generate_week_plan_allows_repeats_when_recipe_pool_too_small(conn):
     days = plan_service.list_plan_days(conn, week_plan_id)
     assert len(days) == 7
     assert all(d.recipe_id is not None for d in days)
+
+
+def test_generate_week_plan_failure_partway_through_leaves_no_partial_plan(conn, monkeypatch):
+    """Under autocommit=True (see docs/DECISIONS.md), each INSERT lands on
+    its own by default — generate_week_plan wraps the week_plans + 7x
+    plan_days sequence in `with conn.transaction():` so a failure partway
+    through the week can't leave an orphan week_plans row with only some
+    of its days. Forces a failure the database/app doesn't otherwise
+    produce (current_season raising on the 4th day) to prove the rollback
+    covers the whole sequence, not just the failing statement."""
+    make_recipe(conn, name="Recipe A")
+    make_recipe(conn, name="Recipe B")
+
+    real_current_season = plan_service.current_season
+    calls = {"n": 0}
+
+    def flaky_current_season(for_date):
+        calls["n"] += 1
+        if calls["n"] == 4:
+            raise RuntimeError("simulated failure partway through the week")
+        return real_current_season(for_date)
+
+    monkeypatch.setattr(plan_service, "current_season", flaky_current_season)
+
+    before_week_plans = conn.execute("SELECT COUNT(*) FROM week_plans").fetchone()[0]
+    before_plan_days = conn.execute("SELECT COUNT(*) FROM plan_days").fetchone()[0]
+
+    with pytest.raises(RuntimeError):
+        plan_service.generate_week_plan(
+            conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar()
+        )
+
+    after_week_plans = conn.execute("SELECT COUNT(*) FROM week_plans").fetchone()[0]
+    after_plan_days = conn.execute("SELECT COUNT(*) FROM plan_days").fetchone()[0]
+    assert after_week_plans == before_week_plans, "the orphan week_plans row must be rolled back too"
+    assert after_plan_days == before_plan_days
 
 
 def test_get_latest_week_plan_returns_most_recent(conn):

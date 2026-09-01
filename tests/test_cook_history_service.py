@@ -4,10 +4,10 @@ Milestone 8 tests: cook history service functions
 """
 
 import datetime as dt
-import sqlite3
 
 import pytest
 
+import database
 import models
 from models import CalendarDay
 from services import cook_history as history_service
@@ -16,15 +16,12 @@ from services import recipes as recipe_service
 
 
 @pytest.fixture
-def conn():
-    connection = sqlite3.connect(":memory:")
-    connection.execute("PRAGMA foreign_keys = ON")
-    models.create_recipes_table(connection)
-    models.create_recipe_ingredients_table(connection)
-    models.create_week_plans_table(connection)
-    models.create_plan_days_table(connection)
-    models.create_cook_history_table(connection)
+def conn(tmp_path):
+    connection = database.get_connection(identity=tmp_path)
     yield connection
+    schema = database.schema_name_for(tmp_path)
+    connection.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    connection.commit()
     connection.close()
 
 
@@ -84,15 +81,16 @@ def test_mark_day_cooked_raises_for_missing_plan_day(conn):
 
 def test_mark_day_cooked_raises_when_no_recipe_assigned(conn):
     week_plan_id = conn.execute(
-        "INSERT INTO week_plans (week_start_date) VALUES (?)", ("2026-08-31",)
-    ).lastrowid
+        "INSERT INTO week_plans (week_start_date) VALUES (%s) RETURNING id", ("2026-08-31",)
+    ).fetchone()[0]
     plan_day_id = conn.execute(
         """
         INSERT INTO plan_days (week_plan_id, day_of_week, date, is_busy, dinner_ready_time, recipe_id)
-        VALUES (?, 'monday', '2026-08-31', 0, '18:00', NULL)
+        VALUES (%s, 'monday', '2026-08-31', 0, '18:00', NULL)
+        RETURNING id
         """,
         (week_plan_id,),
-    ).lastrowid
+    ).fetchone()[0]
     conn.commit()
     with pytest.raises(ValueError):
         history_service.mark_day_cooked(conn, plan_day_id)
@@ -106,7 +104,7 @@ def test_mark_day_cooked_creates_a_row_with_expected_fields(conn):
     new_id = history_service.mark_day_cooked(conn, monday.id)
     assert new_id is not None
     row = conn.execute(
-        "SELECT recipe_id, plan_day_id, cooked_on FROM cook_history WHERE id = ?", (new_id,)
+        "SELECT recipe_id, plan_day_id, cooked_on FROM cook_history WHERE id = %s", (new_id,)
     ).fetchone()
     assert row[0] == monday.recipe_id
     assert row[1] == monday.id
@@ -120,7 +118,7 @@ def test_mark_day_cooked_accepts_cooked_on_override(conn):
     )
     override = dt.date(2026, 9, 5)
     new_id = history_service.mark_day_cooked(conn, monday.id, cooked_on=override)
-    row = conn.execute("SELECT cooked_on FROM cook_history WHERE id = ?", (new_id,)).fetchone()
+    row = conn.execute("SELECT cooked_on FROM cook_history WHERE id = %s", (new_id,)).fetchone()
     assert row[0] == override.isoformat()
 
 
@@ -148,12 +146,12 @@ def test_finalize_plan_marks_every_day(conn):
 
 def test_finalize_plan_skips_days_with_no_recipe(conn):
     week_plan_id = conn.execute(
-        "INSERT INTO week_plans (week_start_date) VALUES (?)", ("2026-08-31",)
-    ).lastrowid
+        "INSERT INTO week_plans (week_start_date) VALUES (%s) RETURNING id", ("2026-08-31",)
+    ).fetchone()[0]
     conn.execute(
         """
         INSERT INTO plan_days (week_plan_id, day_of_week, date, is_busy, dinner_ready_time, recipe_id)
-        VALUES (?, 'monday', '2026-08-31', 0, '18:00', NULL)
+        VALUES (%s, 'monday', '2026-08-31', 0, '18:00', NULL)
         """,
         (week_plan_id,),
     )
@@ -204,11 +202,11 @@ def test_list_recent_cook_history_orders_most_recent_first(conn):
         ),
     )
     conn.execute(
-        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (?, ?)",
+        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (%s, %s)",
         (recipe_a.id, "2026-08-01"),
     )
     conn.execute(
-        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (?, ?)",
+        "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (%s, %s)",
         (recipe_b.id, "2026-08-20"),
     )
     conn.commit()
@@ -227,7 +225,7 @@ def test_list_recent_cook_history_respects_limit(conn):
     )
     for day in range(1, 6):
         conn.execute(
-            "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (?, ?)",
+            "INSERT INTO cook_history (recipe_id, cooked_on) VALUES (%s, %s)",
             (recipe.id, f"2026-08-{day:02d}"),
         )
     conn.commit()

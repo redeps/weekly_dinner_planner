@@ -6,8 +6,10 @@ the whole script on every interaction, so a history write in rendering
 code could turn one user action into duplicate rows).
 
 Uses streamlit.testing.v1.AppTest to drive the real page script, with
-database.DATA_DIR/DB_PATH monkeypatched to an isolated temp file so this
-never touches the real data/ directory.
+database.TEST_SCHEMA_IDENTITY monkeypatched so database.get_connection()
+calls made with no arguments (as app.py/pages/*.py always make them)
+transparently resolve to an isolated per-test Postgres schema instead of
+the real `public` schema.
 """
 
 import datetime as dt
@@ -27,8 +29,13 @@ WEEK_PLAN_PAGE = str(REPO / "pages" / "5_Week_Plan.py")
 
 @pytest.fixture
 def isolated_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(database, "TEST_SCHEMA_IDENTITY", tmp_path)
+    yield
+    schema = database.schema_name_for(tmp_path)
+    conn = database.get_connection()
+    conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    conn.commit()
+    conn.close()
 
 
 @pytest.fixture

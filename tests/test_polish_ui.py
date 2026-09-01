@@ -2,12 +2,13 @@
 Milestone 12 tests: confirmation dialogs, empty-state wording, and backup
 export, driven against the actual page scripts via AppTest.
 
-Uses an isolated database (database.DATA_DIR/DB_PATH monkeypatched to a
-temp file), same pattern as test_cook_history_ui.py — never touches the
-real data/ directory.
+Uses an isolated database (database.TEST_SCHEMA_IDENTITY monkeypatched to
+a per-test Postgres schema), same pattern as test_cook_history_ui.py —
+never touches the real `public` schema.
 """
 
-import sqlite3
+import io
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -24,8 +25,13 @@ HOME_PAGE = str(REPO / "app.py")
 
 @pytest.fixture
 def isolated_db(tmp_path, monkeypatch):
-    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(database, "TEST_SCHEMA_IDENTITY", tmp_path)
+    yield
+    schema = database.schema_name_for(tmp_path)
+    conn = database.get_connection()
+    conn.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    conn.commit()
+    conn.close()
 
 
 @pytest.fixture
@@ -155,15 +161,13 @@ def test_home_page_offers_a_backup_download(isolated_db):
     assert not at.exception
     download_buttons = at.download_button
     assert len(download_buttons) == 1
-    assert download_buttons[0].label == "Download Backup (.db)"
+    assert download_buttons[0].label == "Download Backup (.zip)"
 
 
-def test_backup_download_contains_valid_sqlite_data(recipe_id, tmp_path):
+def test_backup_download_contains_valid_data(recipe_id):
     exported = database.export_database_bytes()
-    backup_path = tmp_path / "backup_check.db"
-    backup_path.write_bytes(exported)
 
-    conn = sqlite3.connect(backup_path)
-    names = [row[0] for row in conn.execute("SELECT name FROM recipes WHERE name = 'Deactivate Me'")]
-    conn.close()
-    assert names == ["Deactivate Me"]
+    with zipfile.ZipFile(io.BytesIO(exported)) as zf:
+        recipes_csv = zf.read("recipes.csv").decode()
+
+    assert "Deactivate Me" in recipes_csv

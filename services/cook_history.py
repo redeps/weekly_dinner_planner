@@ -8,23 +8,25 @@ Feeds the rotation weighting in services/plan_generation.py.
 """
 
 import datetime as dt
-import sqlite3
 from typing import Optional
+
+import psycopg
+from psycopg.rows import dict_row
 
 from models import CookHistoryEntry
 from services.plan_generation import get_plan_day, list_plan_days
 
 
-def has_been_cooked(conn: sqlite3.Connection, plan_day_id: int) -> bool:
+def has_been_cooked(conn: psycopg.Connection, plan_day_id: int) -> bool:
     """Whether this plan day already has a cook_history record."""
     row = conn.execute(
-        "SELECT 1 FROM cook_history WHERE plan_day_id = ? LIMIT 1", (plan_day_id,)
+        "SELECT 1 FROM cook_history WHERE plan_day_id = %s LIMIT 1", (plan_day_id,)
     ).fetchone()
     return row is not None
 
 
 def mark_day_cooked(
-    conn: sqlite3.Connection, plan_day_id: int, *, cooked_on: Optional[dt.date] = None
+    conn: psycopg.Connection, plan_day_id: int, *, cooked_on: Optional[dt.date] = None
 ) -> Optional[int]:
     """Record a plan day's recipe as cooked. Returns the new cook_history
     id, or None if this plan day was already marked cooked — idempotent
@@ -44,14 +46,15 @@ def mark_day_cooked(
 
     cooked_on = cooked_on or dt.date.fromisoformat(plan_day.date)
     cursor = conn.execute(
-        "INSERT INTO cook_history (recipe_id, plan_day_id, cooked_on) VALUES (?, ?, ?)",
+        "INSERT INTO cook_history (recipe_id, plan_day_id, cooked_on) VALUES (%s, %s, %s) RETURNING id",
         (plan_day.recipe_id, plan_day_id, cooked_on.isoformat()),
     )
+    new_id = cursor.fetchone()[0]
     conn.commit()
-    return cursor.lastrowid
+    return new_id
 
 
-def finalize_plan(conn: sqlite3.Connection, week_plan_id: int) -> list[int]:
+def finalize_plan(conn: psycopg.Connection, week_plan_id: int) -> list[int]:
     """Mark every day of a week plan as cooked. Days with no recipe
     assigned, or already marked cooked, are skipped — safe to call more
     than once. Returns the newly created cook_history ids."""
@@ -65,14 +68,12 @@ def finalize_plan(conn: sqlite3.Connection, week_plan_id: int) -> list[int]:
     return ids
 
 
-def _dict_cursor(conn: sqlite3.Connection) -> sqlite3.Cursor:
-    cursor = conn.cursor()
-    cursor.row_factory = sqlite3.Row
-    return cursor
+def _dict_cursor(conn: psycopg.Connection) -> psycopg.Cursor:
+    return conn.cursor(row_factory=dict_row)
 
 
 def list_recent_cook_history(
-    conn: sqlite3.Connection, *, limit: int = 20
+    conn: psycopg.Connection, *, limit: int = 20
 ) -> list[CookHistoryEntry]:
     """The most recently cooked recipes, most recent first — powers the
     "what have we cooked lately" view."""
@@ -87,7 +88,7 @@ def list_recent_cook_history(
         FROM cook_history
         JOIN recipes ON recipes.id = cook_history.recipe_id
         ORDER BY cook_history.cooked_on DESC, cook_history.id DESC
-        LIMIT ?
+        LIMIT %s
         """,
         (limit,),
     ).fetchall()

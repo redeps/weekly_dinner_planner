@@ -1,22 +1,23 @@
 """
 Milestone 1 tests: recipe service functions (services/recipes.py).
 
-Uses an isolated in-memory database per test — never touches data/.
+Uses an isolated per-test Postgres schema — never touches the `public`
+schema. See docs/DECISIONS.md — Milestone 13 hosting architecture.
 """
-
-import sqlite3
 
 import pytest
 
-import models
+import database
 from services import recipes as recipe_service
 
 
 @pytest.fixture
-def conn():
-    connection = sqlite3.connect(":memory:")
-    models.create_recipes_table(connection)
+def conn(tmp_path):
+    connection = database.get_connection(identity=tmp_path)
     yield connection
+    schema = database.schema_name_for(tmp_path)
+    connection.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    connection.commit()
     connection.close()
 
 

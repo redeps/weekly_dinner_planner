@@ -4,8 +4,10 @@ table. Screens call these; they never write to the database directly (see
 docs/AGENT_INSTRUCTIONS.md).
 """
 
-import sqlite3
 from typing import Optional, TypedDict
+
+import psycopg
+from psycopg.rows import dict_row
 
 from models import STORE_CATEGORIES, Ingredient
 
@@ -17,7 +19,7 @@ class IngredientInput(TypedDict, total=False):
     store_category: str
 
 
-def _row_to_ingredient(row: sqlite3.Row) -> Ingredient:
+def _row_to_ingredient(row: dict) -> Ingredient:
     return Ingredient(
         id=row["id"],
         recipe_id=row["recipe_id"],
@@ -28,10 +30,8 @@ def _row_to_ingredient(row: sqlite3.Row) -> Ingredient:
     )
 
 
-def _dict_cursor(conn: sqlite3.Connection) -> sqlite3.Cursor:
-    cursor = conn.cursor()
-    cursor.row_factory = sqlite3.Row
-    return cursor
+def _dict_cursor(conn: psycopg.Connection) -> psycopg.Cursor:
+    return conn.cursor(row_factory=dict_row)
 
 
 def _validate_store_category(store_category: str) -> None:
@@ -39,17 +39,17 @@ def _validate_store_category(store_category: str) -> None:
         raise ValueError(f"Invalid store_category: {store_category!r}")
 
 
-def list_ingredients(conn: sqlite3.Connection, recipe_id: int) -> list[Ingredient]:
+def list_ingredients(conn: psycopg.Connection, recipe_id: int) -> list[Ingredient]:
     """List a recipe's ingredients in entry order."""
     rows = _dict_cursor(conn).execute(
-        "SELECT * FROM recipe_ingredients WHERE recipe_id = ? ORDER BY id",
+        "SELECT * FROM recipe_ingredients WHERE recipe_id = %s ORDER BY id",
         (recipe_id,),
     ).fetchall()
     return [_row_to_ingredient(row) for row in rows]
 
 
 def replace_recipe_ingredients(
-    conn: sqlite3.Connection, recipe_id: int, ingredients: list[IngredientInput]
+    conn: psycopg.Connection, recipe_id: int, ingredients: list[IngredientInput]
 ) -> None:
     """Replace all of a recipe's ingredient lines with the given set.
 
@@ -59,19 +59,23 @@ def replace_recipe_ingredients(
     """
     for ingredient in ingredients:
         _validate_store_category(ingredient.get("store_category", "other"))
-    conn.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
-    for ingredient in ingredients:
-        conn.execute(
-            """
-            INSERT INTO recipe_ingredients (recipe_id, name, quantity, unit, store_category)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                recipe_id,
-                ingredient["name"],
-                ingredient.get("quantity"),
-                ingredient.get("unit"),
-                ingredient.get("store_category", "other"),
-            ),
-        )
-    conn.commit()
+    # autocommit=True (see docs/DECISIONS.md) means each statement lands on
+    # its own by default — this delete-all-then-reinsert needs an explicit
+    # transaction so a failure partway through the reinsert can't leave the
+    # recipe with an empty or partial ingredient list.
+    with conn.transaction():
+        conn.execute("DELETE FROM recipe_ingredients WHERE recipe_id = %s", (recipe_id,))
+        for ingredient in ingredients:
+            conn.execute(
+                """
+                INSERT INTO recipe_ingredients (recipe_id, name, quantity, unit, store_category)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    recipe_id,
+                    ingredient["name"],
+                    ingredient.get("quantity"),
+                    ingredient.get("unit"),
+                    ingredient.get("store_category", "other"),
+                ),
+            )

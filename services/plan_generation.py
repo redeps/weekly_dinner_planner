@@ -13,8 +13,10 @@ docs/DECISIONS.md.
 
 import datetime as dt
 import random
-import sqlite3
 from typing import Callable, Optional
+
+import psycopg
+from psycopg.rows import dict_row
 
 from models import DAYS_OF_WEEK, CalendarDay, PlanDay, Recipe, WeekPlan
 from services.recipes import list_recipes
@@ -42,7 +44,7 @@ def current_season(for_date: dt.date) -> str:
     return SEASON_BY_MONTH[for_date.month]
 
 
-def last_cooked_dates(conn: sqlite3.Connection) -> dict[int, dt.date]:
+def last_cooked_dates(conn: psycopg.Connection) -> dict[int, dt.date]:
     """Map recipe_id -> most recent cooked_on date, from cook_history.
     A recipe with no rows is simply absent (never penalized for rotation)."""
     rows = conn.execute(
@@ -108,7 +110,7 @@ def choose_recipe(
 
 
 def generate_week_plan(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     *,
     week_start_date: dt.date,
     calendar: list[CalendarDay],
@@ -130,59 +132,61 @@ def generate_week_plan(
     today = dt.date.today()
     calendar_by_day = {day.day_of_week: day for day in calendar}
 
-    week_plan_id = conn.execute(
-        "INSERT INTO week_plans (week_start_date) VALUES (?)",
-        (week_start_date.isoformat(),),
-    ).lastrowid
+    # autocommit=True (see docs/DECISIONS.md) means each statement lands on
+    # its own by default — this week_plans + 7x plan_days sequence needs an
+    # explicit transaction so a failure partway through the week can't leave
+    # an orphan week_plans row with only some of its days created.
+    with conn.transaction():
+        week_plan_id = conn.execute(
+            "INSERT INTO week_plans (week_start_date) VALUES (%s) RETURNING id",
+            (week_start_date.isoformat(),),
+        ).fetchone()[0]
 
-    used_recipe_ids: set[int] = set()
-    for offset, day_name in enumerate(DAYS_OF_WEEK):
-        cal_day = calendar_by_day[day_name]
-        plan_date = week_start_date + dt.timedelta(days=offset)
-        season = current_season(plan_date)
+        used_recipe_ids: set[int] = set()
+        for offset, day_name in enumerate(DAYS_OF_WEEK):
+            cal_day = calendar_by_day[day_name]
+            plan_date = week_start_date + dt.timedelta(days=offset)
+            season = current_season(plan_date)
 
-        available = [r for r in recipes if r.id not in used_recipe_ids] or recipes
-        chosen = choose_recipe(
-            available,
-            season=season,
-            is_busy=cal_day.is_busy,
-            last_cooked_by_recipe=last_cooked_by_recipe,
-            today=today,
-            rng=rng,
-        )
-        used_recipe_ids.add(chosen.id)
+            available = [r for r in recipes if r.id not in used_recipe_ids] or recipes
+            chosen = choose_recipe(
+                available,
+                season=season,
+                is_busy=cal_day.is_busy,
+                last_cooked_by_recipe=last_cooked_by_recipe,
+                today=today,
+                rng=rng,
+            )
+            used_recipe_ids.add(chosen.id)
 
-        conn.execute(
-            """
-            INSERT INTO plan_days (
-                week_plan_id, day_of_week, date, is_busy, dinner_ready_time, recipe_id
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                week_plan_id,
-                day_name,
-                plan_date.isoformat(),
-                int(cal_day.is_busy),
-                cal_day.dinner_ready_time.strftime("%H:%M"),
-                chosen.id,
-            ),
-        )
+            conn.execute(
+                """
+                INSERT INTO plan_days (
+                    week_plan_id, day_of_week, date, is_busy, dinner_ready_time, recipe_id
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    week_plan_id,
+                    day_name,
+                    plan_date.isoformat(),
+                    int(cal_day.is_busy),
+                    cal_day.dinner_ready_time.strftime("%H:%M"),
+                    chosen.id,
+                ),
+            )
 
-    conn.commit()
     return week_plan_id
 
 
-def _dict_cursor(conn: sqlite3.Connection) -> sqlite3.Cursor:
-    cursor = conn.cursor()
-    cursor.row_factory = sqlite3.Row
-    return cursor
+def _dict_cursor(conn: psycopg.Connection) -> psycopg.Cursor:
+    return conn.cursor(row_factory=dict_row)
 
 
-def _row_to_week_plan(row: sqlite3.Row) -> WeekPlan:
+def _row_to_week_plan(row: dict) -> WeekPlan:
     return WeekPlan(id=row["id"], week_start_date=row["week_start_date"], created_at=row["created_at"])
 
 
-def _row_to_plan_day(row: sqlite3.Row) -> PlanDay:
+def _row_to_plan_day(row: dict) -> PlanDay:
     return PlanDay(
         id=row["id"],
         week_plan_id=row["week_plan_id"],
@@ -194,14 +198,14 @@ def _row_to_plan_day(row: sqlite3.Row) -> PlanDay:
     )
 
 
-def get_week_plan(conn: sqlite3.Connection, week_plan_id: int) -> Optional[WeekPlan]:
+def get_week_plan(conn: psycopg.Connection, week_plan_id: int) -> Optional[WeekPlan]:
     row = _dict_cursor(conn).execute(
-        "SELECT * FROM week_plans WHERE id = ?", (week_plan_id,)
+        "SELECT * FROM week_plans WHERE id = %s", (week_plan_id,)
     ).fetchone()
     return _row_to_week_plan(row) if row else None
 
 
-def get_latest_week_plan(conn: sqlite3.Connection) -> Optional[WeekPlan]:
+def get_latest_week_plan(conn: psycopg.Connection) -> Optional[WeekPlan]:
     """The most recently generated week plan, if any."""
     row = _dict_cursor(conn).execute(
         "SELECT * FROM week_plans ORDER BY id DESC LIMIT 1"
@@ -209,23 +213,23 @@ def get_latest_week_plan(conn: sqlite3.Connection) -> Optional[WeekPlan]:
     return _row_to_week_plan(row) if row else None
 
 
-def list_plan_days(conn: sqlite3.Connection, week_plan_id: int) -> list[PlanDay]:
+def list_plan_days(conn: psycopg.Connection, week_plan_id: int) -> list[PlanDay]:
     """A week plan's 7 days, in date order."""
     rows = _dict_cursor(conn).execute(
-        "SELECT * FROM plan_days WHERE week_plan_id = ? ORDER BY date", (week_plan_id,)
+        "SELECT * FROM plan_days WHERE week_plan_id = %s ORDER BY date", (week_plan_id,)
     ).fetchall()
     return [_row_to_plan_day(row) for row in rows]
 
 
-def get_plan_day(conn: sqlite3.Connection, plan_day_id: int) -> Optional[PlanDay]:
+def get_plan_day(conn: psycopg.Connection, plan_day_id: int) -> Optional[PlanDay]:
     row = _dict_cursor(conn).execute(
-        "SELECT * FROM plan_days WHERE id = ?", (plan_day_id,)
+        "SELECT * FROM plan_days WHERE id = %s", (plan_day_id,)
     ).fetchone()
     return _row_to_plan_day(row) if row else None
 
 
 def swap_day_recipe(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     plan_day_id: int,
     *,
     rng: Optional[random.Random] = None,
@@ -272,6 +276,6 @@ def swap_day_recipe(
         rng=rng,
     )
 
-    conn.execute("UPDATE plan_days SET recipe_id = ? WHERE id = ?", (chosen.id, plan_day_id))
+    conn.execute("UPDATE plan_days SET recipe_id = %s WHERE id = %s", (chosen.id, plan_day_id))
     conn.commit()
     return chosen

@@ -58,10 +58,10 @@ def main() -> None:
         "separately if you want those too."
     )
     st.download_button(
-        "Download Backup (.db)",
+        "Download Backup (.zip)",
         data=export_database_bytes(),
-        file_name=f"meal_planner_backup_{dt.date.today().isoformat()}.db",
-        mime="application/octet-stream",
+        file_name=f"meal_planner_backup_{dt.date.today().isoformat()}.zip",
+        mime="application/zip",
     )
 
 
