@@ -237,15 +237,22 @@ local instance; the deployed app is the only thing that talks to Neon.
 dsn = "postgresql://postgres@localhost:5432/meal_planner"
 ```
 
-**Photo storage (Phase 2, not yet implemented):** Cloudflare R2 via
-`boto3`. Once implemented, `.streamlit/secrets.toml` will need an `[r2]`
-section:
+**Photo storage ✅ done (Phase 2):** Cloudflare R2 via `boto3`, alongside
+(not replacing) local filesystem storage — see docs/DECISIONS.md.
+`.streamlit/secrets.toml` needs an `[r2]` section only once R2 is
+actually wanted (e.g. testing the hosted path locally); with no `[r2]`
+section at all, `services/photos.py` behaves exactly as it always has,
+local-only — this is how local dev stays on local storage with zero
+extra configuration. Key names match `boto3`'s S3 client constructor
+exactly (`aws_access_key_id`/`aws_secret_access_key`, not the shorter
+names an earlier draft of this doc used — confirmed against `boto3`
+directly while implementing Phase 2):
 
 ```toml
 [r2]
 endpoint_url = "https://<account-id>.r2.cloudflarestorage.com"
-access_key_id = "..."
-secret_access_key = "..."
+aws_access_key_id = "..."
+aws_secret_access_key = "..."
 bucket_name = "meal-planner-photos"
 ```
 
@@ -274,12 +281,12 @@ dsn = "postgresql://<user>:<password>@<neon-host>/<db>?sslmode=require"
 
 [r2]
 endpoint_url = "https://<account-id>.r2.cloudflarestorage.com"
-access_key_id = "..."
-secret_access_key = "..."
+aws_access_key_id = "..."
+aws_secret_access_key = "..."
 bucket_name = "meal-planner-photos"
 ```
 
-Whatever platform specifics change between now and Phase 2/3 actually
+Whatever platform specifics change between now and Phase 3 actually
 starting, the same never-commit-a-secret rule from steps 10-11 applies to
 all of these too.
 

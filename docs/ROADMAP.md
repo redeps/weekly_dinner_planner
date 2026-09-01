@@ -185,8 +185,14 @@ can't be verified independently; see the "Phase 1/2 merge" entry in
   `get_connection()` to `autocommit=True` (Streamlit pages never close
   their connection, which otherwise leaves Postgres transactions open and
   locks other connections — not a concern SQLite's file-based model had).
-- **Phase 2 — Photo storage:** Cloudflare R2 via `boto3`, matching
-  `services/photos.py`'s existing `photo_relative_path()` key scheme.
+- **Phase 2 — Photo storage ✅ done:** Cloudflare R2 via `boto3`,
+  alongside (not replacing) local filesystem storage — local storage now
+  doubles as a persistent cache that R2 syncs to/through when configured,
+  so every existing page's `photo_exists()`/`resolve_photo_path()` call
+  keeps working unchanged. Key scheme (`photos/<recipe_id>.jpg`) matches
+  `services/photos.py`'s existing `photo_relative_path()`, carried over
+  unchanged as planned. Backend selection is "is `st.secrets['r2']`
+  configured?", not a separate toggle — see `docs/DECISIONS.md`.
 - **Phase 3 — Auth + deployment ✅ auth done:** in-app household
   passphrase gate (`services/auth.py`, implemented) instead of
   Streamlit Community Cloud's private-app mechanism, since the free

@@ -709,3 +709,115 @@ pattern specifically (multi-statement writes across more than one
   `create_recipe` — which, like `finalize_plan` above, already committed
   per-recipe under the old `sqlite3` code too, so there's no behavior
   change to fix.
+
+## 2026-09-01 — Milestone 13 Phase 3: R2 photo storage
+
+Implementing this surfaced two things worth recording before the design
+itself: the Milestone 13 architecture entry's claim that
+"`services/photos.py` keeps its swappable local/hosted backend design"
+was describing a design that didn't actually exist in the code yet —
+`services/photos.py` was local-filesystem-only, no swappable anything.
+This phase is what builds that design, not something that already existed
+to be extended. Separately, `docs/SETUP.md`'s `[r2]` secrets example
+(added ahead of implementation, during the Phase 1 docs round) used
+`access_key_id`/`secret_access_key` — checked directly against `boto3`
+while implementing this phase and confirmed wrong: `boto3.client("s3",
+...)` expects `aws_access_key_id`/`aws_secret_access_key`. Fixed in both
+places that example appears.
+
+**Design: local storage becomes a persistent cache that R2 syncs
+to/through, not a separate code path.** Every existing call site
+(`pages/1_Recipes.py`, `3_Recipe_Detail.py`, `5_Week_Plan.py`,
+`8_Cook_Mode.py`, `2_Add_Edit_Recipe.py`) does
+`str(photos.resolve_photo_path(...))` and passes that straight to
+`st.image()` — i.e. every caller already assumes `resolve_photo_path()`
+returns a local file. An R2-only design (photos living *only* in R2, no
+local copy) would have broken every one of those call sites — they'd need
+a URL or bytes, not a local `Path` — directly contradicting this phase's
+"nothing outside `services/photos.py`... should need to change" scope.
+Resolution: `save_recipe_photo()` and `delete_recipe_photo()` always
+write/remove the local file exactly as before, and — only when R2 is
+configured — also sync that same write/delete to R2.
+`resolve_photo_path()` and `photo_exists()` check the local cache first;
+only on a cache miss, and only if R2 is configured, do they fall back to
+R2 (downloading into the cache, or a `head_object` existence check,
+respectively). Every function's return type and contract is unchanged,
+so no page needed touching — the scope-boundary conflict resolved by
+design rather than by escalating, unlike Phase 1's placeholder-syntax
+conflict which genuinely couldn't be resolved without widening scope.
+
+**Backend selection: `st.secrets["r2"]` presence, not a separate env var
+like `AI_ASSIST_BACKEND`.** The task asked to follow whatever pattern
+backend selection "actually works today" rather than invent a new one —
+`services/photos.py` had none, so the candidates were this codebase's two
+existing precedents: `AI_ASSIST_BACKEND` (an explicit `os.environ` toggle
+the operator sets deliberately, chosen specifically so a stray API key
+lying around doesn't silently redirect traffic to a cloud service — see
+the AI Assist implementation entries above) and Gemini's `is_available()`
+(auto-detects from whether a key is configured, no separate toggle at
+all). R2 vs. local storage matches the second shape, not the first: this
+Milestone 13 architecture entry already frames it as "local filesystem
+for the local-Postgres-backed dev environment... unchanged; R2 for
+production" — a fully environment-determined choice, not a deliberate
+per-developer preference switch the way Ollama-vs-Gemini genuinely is.
+Auto-detecting from secret presence also means zero new configuration
+surface: local dev has no `[r2]` section and never touches R2 at all
+(same "local dev never touches the hosted resource" shape as Phase 1's
+Postgres), and the deployed app's Streamlit Cloud secrets manager having
+an `[r2]` section is what turns R2 on there — no separate flag to keep in
+sync with whether the credentials actually exist.
+
+**Failure handling: every R2 call is caught and swallowed, never
+raised** — confirmed necessary, not just assumed, by reading
+`pages/2_Add_Edit_Recipe.py`'s actual save flow: it already wraps
+`save_recipe_photo()` in `try/except Exception`, showing "Recipe saved,
+but that photo couldn't be processed — try a different image." if it
+raises. If an R2-only failure (upload succeeds locally, R2 sync fails)
+raised through `save_recipe_photo()`, that page would show this
+misleading message for a photo that *was* processed fine — and worse,
+since the exception would happen after the local file write but before
+the function returns its relative path, `update_recipe(...,
+photo_path=relative_path)` on the next line would never run, leaving a
+correctly-saved local file that the database never points to. So R2
+failures are caught inside each `_upload_to_r2`/`_download_from_r2`/
+`_delete_from_r2`/`_r2_object_exists` helper and logged, never
+propagated — the local filesystem result is always what the function's
+success/failure reflects. This is the same "must still run with
+local-only photo storage if R2 isn't configured" principle from the task,
+extended to "...or if R2 is configured but failing," which turned out to
+be the same code path either way given the caching design above.
+
+**Known accepted gap, not hardened against:** if `photo_exists()` reports
+True via a live R2 `head_object` check (no local cache) and the
+*following* `resolve_photo_path()` download then fails (a transient
+network blip between the two calls), `st.image()` will be asked to
+render a path that doesn't exist and will raise. Narrow — only possible
+when R2 is configured (production) and only in the gap between two calls
+within one page render — and not hardened against, per
+`docs/AGENT_INSTRUCTIONS.md` §7 (simplicity over completeness): the
+primary case ("R2 not configured or fully unreachable") is fully covered
+by the caching design; this residual case would need pre-emptively
+downloading on every `photo_exists()` call (extra R2 traffic on every
+page render, for every photo, to close a transient-timing edge case) and
+didn't seem worth it for a household app's scale.
+
+**Testing: `moto`, with the mocked client built without a custom
+`endpoint_url`.** No visibility into home-inventory's own test suite in
+this environment (same limitation noted in the Phase 1 entry for its
+implementation code), so this follows `moto`'s own documented usage
+directly. Confirmed empirically that `moto`'s request interception
+doesn't cover a custom (non-AWS) `endpoint_url` — pointing `boto3.client`
+at a fake `*.r2.cloudflarestorage.com` host under `mock_aws()` still
+attempted a real network connection and failed with an SSL handshake
+error, rather than being intercepted. Since `endpoint_url` is boto3/
+botocore's own well-tested plumbing, not app logic worth testing here,
+tests swap in a `moto`-backed client via `monkeypatch.setattr(photos,
+"_r2_client", ...)` built with only `region_name` set — this still
+exercises the real `put_object`/`get_object`/`delete_object`/
+`head_object` calls and real botocore exceptions, just without the
+endpoint-override detail. Graceful-degradation tests use a second fixture
+that makes `_r2_client()` raise directly, simulating unreachable/
+misconfigured R2 distinctly from R2 simply not being configured at all
+(which the rest of the existing 13 local-only tests already cover, since
+this repo's real `.streamlit/secrets.toml` has no `[r2]` section — they
+run with zero R2-related monkeypatching).
