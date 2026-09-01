@@ -2,3 +2,4 @@ streamlit
 pytest
 Pillow
 psycopg[binary]
+boto3
