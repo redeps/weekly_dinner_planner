@@ -124,11 +124,14 @@ import**, which always uses Gemini regardless of that setting; see
    project or let it create one for you — no billing setup is required
    for the free tier. Copy the key immediately; it's shown only once (it
    starts with `AIza`) — if you lose it, create a new one.
-2. **Restrict the key (recommended).** On the API Keys page in AI Studio,
-   open the new key and restrict it to the **Generative Language API**
-   only. This limits the damage if it's ever leaked — an unrestricted key
-   can be used against other Google APIs on the same project, not just
-   Gemini.
+2. **Restriction is automatic — just confirm it.** As of 2026, keys
+   created in AI Studio are restricted to the Generative Language API by
+   default at creation time — there's no manual restriction step to click
+   through. On the API Keys page, check the **Key Type** column for your
+   key: anything other than "Standard" is fine. If it says "Standard" (an
+   older key type Google is phasing out — these stop working entirely in
+   September 2026), delete it and click **Create API key** again; new
+   keys default to the safer type automatically.
 3. **Set it as `GEMINI_API_KEY` — as a secret, never committed:**
    - **In a Codespace** (recommended): repository → **Settings** →
      **Secrets and variables** → **Codespaces** → **New repository
