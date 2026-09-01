@@ -70,6 +70,7 @@ if st.session_state.get("ingredient_rows_for") != target_recipe_id:
         "af_remove_photo",
     ):
         st.session_state.pop(_key, None)
+    st.session_state["import_happened"] = False
     rows = []
     if existing:
         for ing in list_ingredients(conn, existing.id):
@@ -112,6 +113,7 @@ def _apply_import_draft(draft: dict) -> None:
         )
     st.session_state["ingredient_rows"] = rows
     st.session_state["ingredient_rows_for"] = target_recipe_id
+    st.session_state["import_happened"] = True
     st.session_state["ai_import_message"] = (
         f"Imported \"{draft['name']}\" — review and adjust below before saving."
     )
@@ -202,6 +204,18 @@ is_quick_fallback = st.checkbox(
 servings = st.number_input("Servings", min_value=1, step=1, key="af_servings")
 
 st.subheader("Ingredients")
+
+if ai_available and st.session_state.get("import_happened"):
+    if st.button("🤖 Auto-categorize ingredients"):
+        for row in st.session_state["ingredient_rows"]:
+            if row["store_category"] != "other":
+                continue  # user already picked a category by hand — leave it alone
+            suggestion = ai_assist.suggest_store_category(row["name"])
+            if suggestion:
+                row["store_category"] = suggestion
+                row["_cat_version"] = row.get("_cat_version", 0) + 1
+        st.rerun()
+
 for row in st.session_state["ingredient_rows"]:
     key = row["_key"]
     if ai_available:
