@@ -41,7 +41,10 @@ def test_export_database_bytes_returns_valid_sqlite_file():
     assert exported[:16] == b"SQLite format 3\x00"
 
 
-def test_export_database_bytes_reflects_current_data(tmp_path):
+def test_export_database_bytes_reflects_current_data(tmp_path, monkeypatch):
+    monkeypatch.setattr(database, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.db")
+
     conn = database.get_connection()
     conn.execute(
         """
