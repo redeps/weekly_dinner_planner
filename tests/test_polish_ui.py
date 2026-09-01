@@ -164,6 +164,37 @@ def test_home_page_offers_a_backup_download(isolated_db):
     assert download_buttons[0].label == "Download Backup (.zip)"
 
 
+# --- Home page "+ Add Recipe" button ---
+
+
+def test_add_recipe_button_navigates_to_blank_add_form(isolated_db):
+    # Goes through app.py, unlike most other tests here: the button's
+    # click triggers st.switch_page(), which AppTest can only resolve
+    # correctly when the session started from the real entrypoint (same
+    # reasoning as test_confirming_deactivate_actually_deactivates above).
+    at = AppTest.from_file(HOME_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
+
+    at = [b for b in at.button if b.label == "+ Add Recipe"][0].click().run()
+    assert not at.exception
+    assert at.title[0].value == "Add Recipe"
+    assert at.text_input(key="af_name").value == ""
+
+
+def test_add_recipe_button_does_not_carry_over_a_stale_edit_recipe_id(recipe_id):
+    at = AppTest.from_file(HOME_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
+    at.session_state["edit_recipe_id"] = recipe_id  # simulates a leftover Edit-mode visit
+
+    at = [b for b in at.button if b.label == "+ Add Recipe"][0].click().run()
+    assert not at.exception
+    assert at.title[0].value == "Add Recipe"
+    assert at.text_input(key="af_name").value == ""
+    assert "edit_recipe_id" not in at.session_state
+
+
 def test_backup_download_contains_valid_data(recipe_id):
     exported = database.export_database_bytes()
 

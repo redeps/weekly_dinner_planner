@@ -30,6 +30,10 @@ def main() -> None:
         st.error(f"Database connection failed: {exc}")
         return
 
+    if st.button("+ Add Recipe", type="primary", use_container_width=True):
+        st.session_state.pop("edit_recipe_id", None)
+        st.switch_page("pages/2_Add_Edit_Recipe.py")
+
     st.write(
         "Recipes, the weekly calendar, plan generation, the grocery list, "
         "cook history, and Cook Mode are all up and running — see "
