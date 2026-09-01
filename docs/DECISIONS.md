@@ -821,3 +821,60 @@ misconfigured R2 distinctly from R2 simply not being configured at all
 (which the rest of the existing 13 local-only tests already cover, since
 this repo's real `.streamlit/secrets.toml` has no `[r2]` section — they
 run with zero R2-related monkeypatching).
+
+## 2026-09-01 — Phase 3 durability fix: distinguish a failed R2 backup from a failed local save
+
+The Phase 3 entry above swallows every R2 failure from `save_recipe_photo`
+the same way it swallows read/delete failures — reasoned by analogy to
+home-inventory, where local storage is presumably the durable copy and R2
+sync is a pure bonus. That analogy doesn't hold for *this* app's actual
+deployment: Streamlit Community Cloud's local disk does not survive a
+container restart/redeploy, so once deployed, **R2 is the only durable
+copy**, not a bonus. Swallowing a failed R2 sync identically to a
+successful one meant a photo could show as saved, work fine for the rest
+of that session, and then be silently gone forever the next time the
+container restarts — with nothing telling the household it happened.
+Local *read/delete* failures degrading silently is still correct (see the
+entry above: those already fall back to "acts like local-only," which is
+the right behavior whether R2 is unreachable or never configured) — it's
+specifically the *write* path where a swallowed failure quietly loses
+data instead of just degrading gracefully.
+
+**Fix: `save_recipe_photo` now raises `services.photos.PhotoBackupError`
+when the local save succeeds but the R2 sync fails**, instead of
+swallowing it like every other R2 failure in this module. It's a
+narrow, deliberate exception to this module's own "R2 failures never
+raise" rule, made because this is the one path where silence is actively
+harmful rather than merely a degraded experience. The exception carries
+`.relative_path` — the local save already succeeded and is real and
+usable, so the caller still needs that value to record in
+`recipes.photo_path`, same as the success path. `pages/2_Add_Edit_Recipe.py`
+catches it ahead of the pre-existing generic `except Exception:` and shows
+a distinguishable message ("...couldn't be backed up to cloud storage —
+it may not survive a restart...") instead of the Milestone-11 "...couldn't
+be processed..." message, which would have been actively misleading here
+(the photo *was* processed fine — only the backup failed) and would have
+lost the `photo_path` update entirely, since the original code never
+reached `update_recipe(..., photo_path=relative_path)` when
+`save_recipe_photo` raised for any reason. A pure local processing
+failure (unreadable upload) is unaffected — still any other exception,
+still the original message, still non-blocking, per the explicit
+instruction that this part was already correct.
+
+**Scope: a distinguishable warning, not a retry queue.** A background
+retry mechanism (keep retrying the R2 sync until it succeeds, independent
+of the user's session) would close the gap more completely — right now,
+if the household doesn't notice the warning or doesn't act on it before
+the container restarts, the photo is still lost. Chose not to build one
+this round: this app has no existing background-job/scheduler
+infrastructure to hang it off (Streamlit's execution model is
+request/rerun-driven, not a long-running process with a task queue), and
+adding one is a meaningfully bigger lift — new infrastructure, not a
+targeted fix — for a household app whose own product principles
+(`docs/PRODUCT_SPEC.md` §2) call for staying small. A distinguishable,
+actionable warning ("try saving it again later") gives the household a
+real chance to notice and manually retry, which is a large improvement
+over total silence for comparatively little code. If this turns out to
+be insufficient in practice (households not noticing/acting on the
+warning), a retry queue is the natural next step — revisit then, not
+speculatively now.
