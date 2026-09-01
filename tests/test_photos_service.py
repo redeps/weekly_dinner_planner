@@ -200,7 +200,15 @@ def test_delete_recipe_photo_removes_from_r2(r2_configured):
 
 
 def test_save_recipe_photo_local_save_still_succeeds_when_r2_upload_fails(r2_configured_but_broken):
-    relative_path = photos.save_recipe_photo(make_image_bytes(), recipe_id=15)
+    # A failed R2 sync raises PhotoBackupError (Milestone 13 Phase 3
+    # durability fix — see docs/DECISIONS.md), distinct from a genuine
+    # local processing failure, but the local file must already be saved
+    # and usable regardless — the caller still gets .relative_path off
+    # the exception to record in recipes.photo_path.
+    with pytest.raises(photos.PhotoBackupError) as exc_info:
+        photos.save_recipe_photo(make_image_bytes(), recipe_id=15)
+    relative_path = exc_info.value.relative_path
+    assert relative_path == "photos/15.jpg"
     assert photos._local_path(relative_path).is_file()
 
 
@@ -217,7 +225,8 @@ def test_photo_exists_false_when_r2_configured_but_unreachable(r2_configured_but
 
 
 def test_delete_recipe_photo_does_not_raise_when_r2_delete_fails(r2_configured_but_broken):
-    photos.save_recipe_photo(make_image_bytes(), recipe_id=18)
+    with pytest.raises(photos.PhotoBackupError):
+        photos.save_recipe_photo(make_image_bytes(), recipe_id=18)  # local file still written
     photos.delete_recipe_photo(18)  # must not raise despite the broken R2 client
     assert not photos._local_path(photos.photo_relative_path(18)).is_file()
 

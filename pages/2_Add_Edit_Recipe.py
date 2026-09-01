@@ -311,6 +311,19 @@ if submitted:
             try:
                 relative_path = photos.save_recipe_photo(recipe_photo_upload.getvalue(), saved_id)
                 update_recipe(conn, saved_id, photo_path=relative_path)
+            except photos.PhotoBackupError as exc:
+                # The photo saved and displays fine for now — only the R2
+                # backup failed, so this needs a different message than a
+                # processing failure (see docs/DECISIONS.md — "Phase 3
+                # durability fix"): local disk isn't durable once deployed,
+                # so the household needs to know this copy might not
+                # survive a restart, not that anything is wrong with it now.
+                update_recipe(conn, saved_id, photo_path=exc.relative_path)
+                photo_error = (
+                    "Recipe and photo saved, but the photo couldn't be backed up "
+                    "to cloud storage — it may not survive a restart. Try saving "
+                    "it again later."
+                )
             except Exception:
                 photo_error = (
                     "Recipe saved, but that photo couldn't be processed — try a "

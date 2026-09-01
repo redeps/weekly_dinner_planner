@@ -13,15 +13,20 @@ downloads from R2 first. This means every existing call site
 displays a photo) keeps returning exactly what it always has — a bool /
 a local filesystem Path — with no page changes needed for R2 support.
 
-Any R2-specific failure (missing credentials, network error, etc.) is
-caught and swallowed, never raised — the app must keep working against
-local-only storage if R2 is unavailable or misconfigured, matching this
-codebase's existing "optional hosted dependency never breaks a core
-screen" principle (docs/AGENT_INSTRUCTIONS.md §6; the AI Assist
-graceful-degradation entries in docs/DECISIONS.md). See docs/DECISIONS.md
-— Milestone 13 Phase 3 — for the full reasoning, including why backend
-selection is "is `st.secrets['r2']` configured?" rather than a separate
-env var toggle like `AI_ASSIST_BACKEND`.
+Most R2-specific failures (missing credentials, network error, etc.) are
+caught and swallowed, never raised — reads (`photo_exists()` /
+`resolve_photo_path()`'s cache-miss download) and deletes always degrade
+to local-only behavior, matching this codebase's existing "optional
+hosted dependency never breaks a core screen" principle
+(docs/AGENT_INSTRUCTIONS.md §6; the AI Assist graceful-degradation
+entries in docs/DECISIONS.md). `save_recipe_photo()` is the one
+exception: local disk isn't durable in the actual production deployment
+(it doesn't survive a Streamlit Community Cloud restart), so a failed R2
+sync there raises `PhotoBackupError` instead of swallowing — see that
+function's docstring and docs/DECISIONS.md ("Phase 3 durability fix") for
+the full reasoning, including why backend selection is "is
+`st.secrets['r2']` configured?" rather than a separate env var toggle
+like `AI_ASSIST_BACKEND`.
 
 The database stores a path reference (recipes.photo_path), never a blob.
 photos/ is gitignored — never commit household photos.
@@ -87,13 +92,15 @@ def _r2_bucket() -> str:
     return st.secrets["r2"]["bucket_name"]
 
 
-def _upload_to_r2(local_path: Path, key: str) -> None:
+def _upload_to_r2(local_path: Path, key: str) -> bool:
     try:
         _r2_client().upload_file(
             str(local_path), _r2_bucket(), key, ExtraArgs={"ContentType": "image/jpeg"}
         )
+        return True
     except Exception:
         logger.warning("R2 upload failed for %s; local copy is unaffected", key, exc_info=True)
+        return False
 
 
 def _download_from_r2(key: str, local_path: Path) -> None:
@@ -119,6 +126,20 @@ def _r2_object_exists(key: str) -> bool:
         return False
 
 
+class PhotoBackupError(Exception):
+    """Raised by save_recipe_photo when the local save succeeded but
+    syncing it to R2 failed. Distinct from a plain image-processing
+    failure (an unreadable upload): here the photo *is* saved and usable
+    for the rest of this session, it just isn't durable yet — see
+    docs/DECISIONS.md ("Phase 3 durability fix"). Carries `relative_path`
+    so the caller can still record it in recipes.photo_path; the local
+    file is real and already on disk when this is raised."""
+
+    def __init__(self, relative_path: str):
+        self.relative_path = relative_path
+        super().__init__(f"R2 backup failed for {relative_path}; local copy was saved")
+
+
 def save_recipe_photo(image_bytes: bytes, recipe_id: int) -> str:
     """Resize/compress an uploaded photo and save it under photos/, named
     by the recipe's stable ID — always a single normalized .jpg file per
@@ -126,9 +147,17 @@ def save_recipe_photo(image_bytes: bytes, recipe_id: int) -> str:
     Returns the relative path to store in recipes.photo_path. Raises if
     `image_bytes` isn't a readable image — callers should show that to
     the user rather than swallow it, same as other save-path validation
-    in this app. If R2 is configured, also uploads the saved file — an R2
-    failure here never raises (see module docstring); only an unreadable
-    `image_bytes` does."""
+    in this app.
+
+    If R2 is configured, also uploads the saved file. Unlike an unreadable
+    upload, a failed R2 sync doesn't mean the save failed — the local file
+    is already written and usable — but it does mean the photo isn't
+    durable in production, where local disk doesn't survive a restart
+    (see docs/DECISIONS.md — "Phase 3 durability fix"). That distinction
+    matters enough to the household to raise `PhotoBackupError` rather
+    than swallow it silently like other R2 failures in this module; the
+    caller should catch it separately from a generic processing failure
+    and still use its `.relative_path`, since the save itself succeeded."""
     PHOTOS_DIR.mkdir(exist_ok=True)
     image = Image.open(io.BytesIO(image_bytes))
     image = image.convert("RGB")
@@ -136,8 +165,8 @@ def save_recipe_photo(image_bytes: bytes, recipe_id: int) -> str:
     relative_path = photo_relative_path(recipe_id)
     local_path = _local_path(relative_path)
     image.save(local_path, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
-    if _r2_configured():
-        _upload_to_r2(local_path, relative_path)
+    if _r2_configured() and not _upload_to_r2(local_path, relative_path):
+        raise PhotoBackupError(relative_path)
     return relative_path
 
 
