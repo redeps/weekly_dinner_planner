@@ -519,3 +519,193 @@ per-table CSV/zip export, no `pg_dump`). None of Phases 1, 2, 3, 5, or 6
 are implemented yet — this entry is docs only, recording the settled
 design so implementation can proceed phase by phase against a written
 plan instead of relying on conversation history.
+
+## 2026-09-01 — Milestone 13 Phase 1/2 merge, and implementation findings
+
+Implementing Phase 1 (the entry above) surfaced a problem the phase split
+didn't account for: `get_connection()` returning a Postgres connection —
+required for `schema_name_for(identity)`'s per-test Postgres *schema*,
+which has no SQLite equivalent — breaks every call site in
+`services/recipes.py`, `services/ingredients.py`,
+`services/plan_generation.py`, and `services/cook_history.py` immediately,
+since all four use `?` placeholders and each defines its own
+`_dict_cursor(conn: sqlite3.Connection)` helper. Postgres/psycopg doesn't
+accept `?` placeholders at all — this isn't a degraded state the app
+tolerates until Phase 2, it's a hard break (every query fails), so Phase 1
+and Phase 2 could never actually be verified as separate, independently-
+green states the way every other milestone in this project has been.
+Corrected boundary: **Phase 1 now covers the connection layer and the
+four named services' SQL dialect together** (see `docs/ROADMAP.md`,
+renumbered from six phases to five). Photo storage (now Phase 2, was
+Phase 3) is unaffected by this — `services/photos.py` never touched
+`sqlite3` placeholders or row objects, so it remains a genuinely
+independent next phase.
+
+Implementation choices made while porting the four services, beyond the
+placeholder syntax (`?` → `%s`) already anticipated by the roadmap:
+
+- **Row access: `conn.cursor(row_factory=psycopg.rows.dict_row)` replaces
+  each file's `_dict_cursor()` sqlite3.Row setup**, one-line body instead
+  of three. Dict rows support the same `row["column"]` access used
+  throughout, so no call-site changes were needed beyond the cursor
+  construction itself. The plain `conn.execute(...)` call sites that
+  relied on positional tuple access (`row[0]`) were deliberately left
+  alone — psycopg3's default row factory is already `tuple_row`, matching
+  sqlite3's default (`None` = tuples) exactly, so the existing mixed
+  "some call sites want dicts, some want tuples" pattern carried over with
+  zero changes to those call sites.
+- **`cursor.lastrowid` has no psycopg equivalent** (Postgres has no
+  client-side last-insert-id concept) — every insert that needed the new
+  row's id (`create_recipe`, `generate_week_plan`'s `week_plans` insert,
+  `mark_day_cooked`) gained a `RETURNING id` clause and reads
+  `cursor.fetchone()[0]` instead.
+- **`LIKE ? COLLATE NOCASE` (search) → `ILIKE %s`; `ORDER BY name COLLATE
+  NOCASE` → `ORDER BY LOWER(name)`.** Postgres has no built-in `NOCASE`
+  collation (that needs ICU or the `citext` extension, neither used
+  elsewhere in this small app) — `ILIKE` and `LOWER()` reproduce the same
+  case-insensitive behavior with no new dependency.
+- **`datetime('now')` (SQLite) → `to_char(now() AT TIME ZONE 'utc',
+  'YYYY-MM-DD HH24:MI:SS')`**, kept as a module-level `_NOW_EXPR`
+  constant in both `database.py` (schema defaults) and `services/recipes.py`
+  (explicit `updated_at` writes) rather than a shared import, since the two
+  files don't otherwise depend on each other and the expression is a
+  one-line literal. Produces the same UTC, second-precision, TEXT-typed
+  string shape as the old SQLite default — confirmed nothing parses
+  `created_at`/`updated_at` with `dt.date.fromisoformat()` (only
+  `cooked_on`, `plan_days.date`, and `week_start_date` do, and those are
+  always Python-supplied `.isoformat()` values, never this DB-computed
+  default), so exact format compatibility wasn't a real constraint, just a
+  courtesy.
+- **`get_connection()` uses `autocommit=True`.** Not part of the original
+  plan, but required once `streamlit run app.py` was actually tested
+  end-to-end: none of `app.py` or `pages/*.py` ever call `conn.close()`
+  (harmless with SQLite's file-based connections, since each Streamlit
+  rerun's connection just got garbage-collected) — with Postgres, an
+  unclosed connection that has run a plain `SELECT` sits `idle in
+  transaction`, holding locks that blocked later connections (observed
+  directly: `pytest` hung, and `pg_stat_activity` showed a page's
+  `has_been_cooked()` query idle-in-transaction for minutes, blocking a
+  test's `DROP SCHEMA ... CASCADE`). `autocommit=True` means each
+  statement lands immediately with nothing left open between them,
+  regardless of whether callers ever close the connection. Confirmed
+  `conn.commit()` is a harmless no-op on an autocommit connection in
+  psycopg3, so none of the four services' existing explicit `.commit()`
+  calls needed to be touched. `export_database_bytes()` wraps its
+  multi-table read in an explicit `with conn.transaction():` block (still
+  works under `autocommit=True`) to keep its `REPEATABLE READ` snapshot
+  guarantee across all five tables.
+- **`export_database_bytes()` changed from a SQLite file to a zip of one
+  CSV per table**, one phase earlier than planned (this was meant to be
+  Phase 6/5's work). The old implementation used `sqlite3.Connection`'s
+  own `.backup()` API, which has no Postgres equivalent — leaving it
+  unported would have left the Home page's backup button (and three
+  `test_foundation.py` tests plus one `test_polish_ui.py` test) broken
+  until Phase 5, which didn't seem like an acceptable place to land this
+  phase. This is a minimal stand-in, not the full Phase 5 design — no
+  photos, no nicer packaging — Phase 5 remains open to revisit if more is
+  needed. `app.py`'s download button label/filename/mime type were updated
+  to match (`.zip`, not `.db`).
+- **Local Postgres auth: apt's default `postgresql` package uses
+  `scram-sha-256` for TCP (`host`) connections**, which needs a password —
+  the documented no-password local DSN
+  (`postgresql://postgres@localhost:5432/meal_planner`, from
+  `docs/SETUP.md`, written before Phase 1 was implemented) would not have
+  worked against a fresh `apt-get install postgresql` without a config
+  change. Verified directly in this environment: switched `pg_hba.conf`'s
+  `host ... 127.0.0.1/32` and `::1/128` lines (and the two `local` peer
+  lines, for consistency) from `scram-sha-256`/`peer` to `trust`, restarted
+  the cluster, and confirmed the documented DSN connects with no password.
+  This fix is baked into `.devcontainer/devcontainer.json`'s
+  `postCreateCommand` via `sed`, so a fresh devcontainer build reproduces
+  it automatically — the DSN itself did not need to change.
+- **Every test that touches the database now goes through
+  `database.get_connection(identity=...)` against real local Postgres**,
+  not `sqlite3.connect(":memory:")` + `models.create_*_table()` (removed
+  along with the rest of `models.py`'s table-creation functions). This
+  affected five previously-sqlite3-only unit test files
+  (`test_recipes_service.py`, `test_ingredients_service.py`,
+  `test_plan_generation_service.py`, `test_cook_history_service.py`,
+  `test_grocery_list_service.py`) plus a handful of raw `?`-placeholder
+  SQL statements those files wrote directly (test fixtures/helpers, not
+  service code) for setting up rows the service layer doesn't expose a
+  writer for. For the two AppTest-driven UI test files
+  (`test_cook_history_ui.py`, `test_polish_ui.py`), which exercise the
+  real page scripts calling `database.get_connection()` with no
+  arguments, isolation is a monkeypatched module-level
+  `database.TEST_SCHEMA_IDENTITY` (mirroring the old
+  `DATA_DIR`/`DB_PATH` monkeypatch pattern) rather than the `identity=`
+  parameter directly — `app.py`/`pages/*.py` were not touched to thread a
+  test identity through, keeping this phase's footprint out of those
+  files. Every isolated-schema fixture drops its schema
+  (`DROP SCHEMA ... CASCADE`) on teardown — confirmed by running the full
+  suite three times in a row with zero `test_%` schemas left behind
+  afterward, to avoid repeating the exact "accumulating rows in a
+  disposable local dev database" mistake fixed the round before this one.
+- **`.streamlit/secrets.toml`'s `[postgres]` section now points at the
+  local instance** (`postgresql://postgres@localhost:5432/meal_planner`),
+  replacing a Neon production DSN that had been placed there during
+  earlier planning/exploration — matches "local dev never touches Neon"
+  from the entry above. That DSN was never actually connected to from
+  this environment as far as can be verified: neither `psycopg` nor
+  `psycopg2` was installed before this phase's work began (confirmed —
+  `import psycopg` failed with `ModuleNotFoundError` at the start), and no
+  local trace of it being used exists (shell/Python history, logs, and a
+  repo-wide search for `neon.tech` all came up empty). This can't be
+  stated as an absolute guarantee — a different environment instance
+  could in principle have used it and left no trace here — but every
+  check available from this environment says "present but unused."
+
+## 2026-09-01 — Milestone 13 Phase 1: transaction atomicity under autocommit
+
+`autocommit=True` (see the entry above) means each individual statement
+lands on its own by default — anywhere multiple writes were relying on
+the old `sqlite3` default (an implicit transaction held open until a
+trailing `conn.commit()`) needed an explicit `with conn.transaction():`
+wrap, or a failure partway through could leave a partial write instead of
+rolling back cleanly. Audited `services/ingredients.py`,
+`services/plan_generation.py`, and `services/cook_history.py` for this
+pattern specifically (multi-statement writes across more than one
+`conn.execute()` call, not just multiple rows via one query):
+
+- **`services/ingredients.py: replace_recipe_ingredients`** — the
+  delete-all-then-reinsert (`docs/DECISIONS.md`'s "Recipe ingredients are
+  replaced wholesale on save" entry above). Wrapped in
+  `with conn.transaction():`. Proven with a new test,
+  `test_replace_recipe_ingredients_db_failure_partway_through_reinsert_leaves_original_intact`
+  (`tests/test_ingredients_service.py`) — forces a NOT NULL violation
+  (`name=None`) on the *second* of three new rows, after the delete and
+  first insert have already run, and asserts the original single
+  ingredient is still there afterward, not an empty or partial set. This
+  is a different failure mode than the existing
+  `test_replace_recipe_ingredients_invalid_row_leaves_existing_rows_untouched`
+  test, which only exercises `_validate_store_category`'s Python-level
+  check — that check runs *before* any `conn.execute()` call, so it can
+  never have proven the DB-level sequence itself was atomic.
+- **`services/plan_generation.py: generate_week_plan`** — the
+  `week_plans` insert followed by 7 `plan_days` inserts. Under the old
+  `sqlite3` code this was already one implicit transaction (no
+  `conn.commit()` between the two kinds of insert); under `autocommit=True`
+  it wasn't, so a failure partway through the week could leave an orphan
+  `week_plans` row with only some of its days. Wrapped in
+  `with conn.transaction():`. Proven with a new test,
+  `test_generate_week_plan_failure_partway_through_leaves_no_partial_plan`
+  (`tests/test_plan_generation_service.py`) — monkeypatches
+  `current_season` to raise on the 4th call and asserts `week_plans`' and
+  `plan_days`' row counts are unchanged afterward.
+- **`services/cook_history.py`** — audited and found to need no change.
+  `mark_day_cooked` is a single `INSERT` (the two prior checks are reads),
+  so there's nothing to wrap. `finalize_plan` loops calling
+  `mark_day_cooked` once per day, but `mark_day_cooked` already committed
+  internally after its own `INSERT` under the *old* `sqlite3` code too —
+  `finalize_plan`'s loop was never one atomic unit in either version, so
+  `autocommit=True` changes nothing here. (It's also self-healing either
+  way: `mark_day_cooked` is idempotent per plan day, so a `finalize_plan`
+  call that fails partway through just leaves the remaining days to be
+  picked up by calling it again — not a partial-write bug, unlike the two
+  cases above where a partial write is actively wrong.)
+- **`services/recipes.py` was not in scope for this audit** (not asked,
+  and already checked while porting it): every write is a single
+  statement per call, including `seed_quick_fallback_recipes`'s loop over
+  `create_recipe` — which, like `finalize_plan` above, already committed
+  per-recipe under the old `sqlite3` code too, so there's no behavior
+  change to fix.

@@ -214,26 +214,30 @@ exceptions to "no paid/cloud dependency yet" are Gemini's free tier (step
 Milestone 13 is actually underway.
 
 The rest of Milestone 13's architecture is decided (see
-`docs/DECISIONS.md` and `docs/ROADMAP.md`'s Phase 1-6 breakdown) but not
-yet implemented. Setup steps below are written ahead of time so Phase 1
-implementation has somewhere to point back to — none of this exists yet.
+`docs/DECISIONS.md` and `docs/ROADMAP.md`'s Phase 1-5 breakdown; originally
+six phases, with the connection layer and the service layer's SQL dialect
+split into separate phases 1/2 — merged into one phase, see
+`docs/DECISIONS.md`, once implementation showed those couldn't be verified
+as independent states). Setup steps below are written ahead of time for
+the phases not yet implemented.
 
-**Local dev (Phase 1, not yet implemented): Postgres runs locally in the
-devcontainer, not Neon.** `.devcontainer/devcontainer.json` doesn't exist
-yet in this repo (confirmed via `git log --all` — it's never been
-created) — Phase 1 creates it, with a `postCreateCommand` that installs
-Postgres via `apt-get install postgresql` and creates a local dev/test
-database. Local dev and tests will only ever talk to this local instance;
-the deployed app is the only thing that talks to Neon. Once Phase 1
-lands, `.streamlit/secrets.toml` will need a `[postgres]` section
-pointing at that local instance, e.g.:
+**Local dev ✅ done (Phase 1): Postgres runs locally in the devcontainer,
+not Neon.** `.devcontainer/devcontainer.json` installs Postgres via
+`apt-get install postgresql` in its `postCreateCommand`, fixes
+`pg_hba.conf` to allow the no-password local connection below (a fresh
+`apt-get install postgresql` defaults local `host` connections to
+`scram-sha-256`, which needs a password — confirmed directly and fixed by
+switching those lines to `trust`; see `docs/DECISIONS.md`), and creates
+the local dev/test database. Local dev and tests only ever talk to this
+local instance; the deployed app is the only thing that talks to Neon.
+`.streamlit/secrets.toml` needs a `[postgres]` section pointing at it:
 
 ```toml
 [postgres]
 dsn = "postgresql://postgres@localhost:5432/meal_planner"
 ```
 
-**Photo storage (Phase 3, not yet implemented):** Cloudflare R2 via
+**Photo storage (Phase 2, not yet implemented):** Cloudflare R2 via
 `boto3`. Once implemented, `.streamlit/secrets.toml` will need an `[r2]`
 section:
 
@@ -245,12 +249,12 @@ secret_access_key = "..."
 bucket_name = "meal-planner-photos"
 ```
 
-**Hosted deployment (Phase 4, remaining part not yet implemented):** the
+**Hosted deployment (Phase 3, remaining part not yet implemented):** the
 app deploys as a **public** app on Streamlit Community Cloud, from a
 **public** GitHub repo (the free tier's one private-app slot is already
 used by the sibling home-inventory app) — protected by the passphrase
 gate instead of Streamlit's private-app mechanism. The repo is still
-private and nothing is deployed yet; both happen only once Phase 4 is
+private and nothing is deployed yet; both happen only once Phase 3 is
 actually underway. When it is, the deployed app's secrets (set via that
 app's **Settings → Secrets**, same TOML format as above, never committed)
 will need: `HOUSEHOLD_PASSWORD`, `GEMINI_API_KEY`, a `[postgres]` section
@@ -275,7 +279,7 @@ secret_access_key = "..."
 bucket_name = "meal-planner-photos"
 ```
 
-Whatever platform specifics change between now and Phase 1/3/4 actually
+Whatever platform specifics change between now and Phase 2/3 actually
 starting, the same never-commit-a-secret rule from steps 10-11 applies to
 all of these too.
 

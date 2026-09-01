@@ -161,23 +161,33 @@ from existing cookbooks is a real need. See `docs/PRODUCT_SPEC.md` §16 and
 
 Architecture decided (Neon + Streamlit Community Cloud, matching the
 sibling "home-inventory" app) — see `docs/DECISIONS.md` for the full
-reasoning. Broken into six phases, worked one at a time:
+reasoning. Broken into five phases, worked one at a time. (Originally six,
+with the connection layer and the service layer's SQL dialect as separate
+phases 1 and 2 — merged into one phase once implementation showed they
+can't be verified independently; see the "Phase 1/2 merge" entry in
+`docs/DECISIONS.md`.)
 
-- **Phase 1 — Local Postgres:** add Postgres to `.devcontainer/`
-  (installed via `apt`, not Neon branching — dev/test never touch Neon).
-  Port home-inventory's `SCHEMA_MIGRATIONS`/`schema_version`/
-  `_apply_migrations` pattern into `database.py` for the five existing
-  tables (`recipes`, `recipe_ingredients`, `week_plans`, `plan_days`,
-  `cook_history`), replacing `models.py`'s per-table
-  `create_*_table()` functions. `models.py` keeps dataclasses/constants
-  only.
-- **Phase 2 — Service layer migration:** migrate `services/recipes.py`,
-  `services/ingredients.py`, `services/plan_generation.py`,
-  `services/cook_history.py` from `sqlite3` to `psycopg`/`%s`
-  placeholders.
-- **Phase 3 — Photo storage:** Cloudflare R2 via `boto3`, matching
+- **Phase 1 — Local Postgres + service layer ✅ done:** added Postgres to
+  `.devcontainer/` (installed via `apt`, not Neon branching — dev/test
+  never touch Neon). Ported home-inventory's `SCHEMA_MIGRATIONS`/
+  `schema_version`/`_apply_migrations` pattern into `database.py` for the
+  five existing tables (`recipes`, `recipe_ingredients`, `week_plans`,
+  `plan_days`, `cook_history`), replacing `models.py`'s per-table
+  `create_*_table()` functions — `models.py` now keeps dataclasses/
+  constants only. Migrated `services/recipes.py`, `services/ingredients.py`,
+  `services/plan_generation.py`, `services/cook_history.py` from `sqlite3`
+  to `psycopg`/`%s` placeholders in the same pass, since `get_connection()`
+  switching to Postgres and those four files staying on `sqlite3` syntax
+  turned out not to be independently verifiable states — see
+  `docs/DECISIONS.md`. Also carried `export_database_bytes()`'s backup
+  format from a SQLite file to a per-table CSV/zip (a minimal stand-in for
+  Phase 5 below, forced by the same connection-layer swap) and switched
+  `get_connection()` to `autocommit=True` (Streamlit pages never close
+  their connection, which otherwise leaves Postgres transactions open and
+  locks other connections — not a concern SQLite's file-based model had).
+- **Phase 2 — Photo storage:** Cloudflare R2 via `boto3`, matching
   `services/photos.py`'s existing `photo_relative_path()` key scheme.
-- **Phase 4 — Auth + deployment ✅ auth done:** in-app household
+- **Phase 3 — Auth + deployment ✅ auth done:** in-app household
   passphrase gate (`services/auth.py`, implemented) instead of
   Streamlit Community Cloud's private-app mechanism, since the free
   tier allows only one private app (already used by home-inventory) —
@@ -185,10 +195,12 @@ reasoning. Broken into six phases, worked one at a time:
   **public** repo as a result. Still pending in this phase: CI, making
   the repo public, and the actual deploy against Neon's production
   branch.
-- **Phase 5 — One-time data migration:** local SQLite → Neon, local
+- **Phase 4 — One-time data migration:** local SQLite → Neon, local
   `photos/` → R2.
-- **Phase 6 — Backups:** pure-Python per-table CSV/zip export (no
-  `pg_dump`).
+- **Phase 5 — Backups:** pure-Python per-table CSV/zip export (no
+  `pg_dump`) — a minimal version of this already shipped in Phase 1 as a
+  forced side effect of the connection-layer swap; revisit here only if
+  it needs more than that (e.g. including photos, a nicer download UX).
 
 Do not begin this milestone, or introduce any paid service beyond the
 already-approved Gemini free tier, before the local prototype is stable and
