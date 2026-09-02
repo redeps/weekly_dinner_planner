@@ -183,14 +183,20 @@ def test_score_recipe_boosts_quick_fallback_beyond_plain_quick_recipe_on_busy_da
     ) > plan_service.score_recipe(plain_quick, **kwargs)
 
 
-def test_score_recipe_quick_fallback_bonus_not_applied_on_non_busy_day(conn):
+def test_score_recipe_busy_day_bonus_does_not_leak_into_non_busy_day(conn):
+    """BUSY_DAY_QUICK_FALLBACK_BONUS must not affect a non-busy day at
+    all — the non-busy-day score should differ from an otherwise-identical
+    plain recipe's by exactly NON_BUSY_DAY_QUICK_FALLBACK_PENALTY, not by
+    some other (e.g. leaked-bonus) factor."""
     today = dt.date(2026, 8, 31)
     quick_fallback = make_recipe(conn, cook_time_minutes=15, is_quick_fallback=True)
     plain = make_recipe(conn, cook_time_minutes=15, is_quick_fallback=False)
     kwargs = dict(season="all-season", is_busy=False, last_cooked=None, today=today)
-    assert plan_service.score_recipe(
-        quick_fallback, **kwargs
-    ) == plan_service.score_recipe(plain, **kwargs)
+    quick_fallback_score = plan_service.score_recipe(quick_fallback, **kwargs)
+    plain_score = plan_service.score_recipe(plain, **kwargs)
+    assert quick_fallback_score == pytest.approx(
+        plain_score * plan_service.NON_BUSY_DAY_QUICK_FALLBACK_PENALTY
+    )
 
 
 def test_rotation_penalty_still_measurably_affects_quick_fallback_selection(conn):
@@ -374,6 +380,30 @@ def test_generate_week_plan_falls_back_without_repeats_when_busy_days_exceed_qui
     assert len(days) == 7
     assert all(d.recipe_id is not None for d in days)
     assert len({d.recipe_id for d in days}) == 7, "no repeat within the week, despite 4 busy days"
+
+
+def test_generate_week_plan_full_non_busy_week_never_forces_repeat_or_unfilled_day(conn):
+    """Regression test for NON_BUSY_DAY_QUICK_FALLBACK_PENALTY, shaped like
+    the real dev DB (8 non-quick-fallback / 3 quick-fallback recipes,
+    matching the investigation's own numbers) — a full 7-day, 0-busy-day
+    week must still never repeat or leave a day unfilled despite the new
+    penalty pushing weight heavily away from 3 of the 11 recipes."""
+    for i in range(3):
+        make_recipe(conn, name=f"Quick Fallback {i}", cook_time_minutes=15, is_quick_fallback=True)
+    for i in range(8):
+        make_recipe(conn, name=f"Regular Recipe {i}", cook_time_minutes=30, is_quick_fallback=False)
+
+    for seed in range(20):
+        week_plan_id = plan_service.generate_week_plan(
+            conn,
+            week_start_date=dt.date(2026, 8, 31),
+            calendar=default_calendar(),  # no busy days
+            rng=random.Random(seed),
+        )
+        days = plan_service.list_plan_days(conn, week_plan_id)
+        assert len(days) == 7
+        assert all(d.recipe_id is not None for d in days)
+        assert len({d.recipe_id for d in days}) == 7, f"repeat occurred at seed={seed}"
 
 
 def test_generate_week_plan_allows_repeats_when_recipe_pool_too_small(conn):

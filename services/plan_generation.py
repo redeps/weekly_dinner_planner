@@ -37,6 +37,7 @@ BUSY_DAY_QUICK_WEIGHT = 2.0
 BUSY_DAY_SLOW_WEIGHT = 0.4
 BUSY_DAY_QUICK_THRESHOLD_MINUTES = 20
 BUSY_DAY_QUICK_FALLBACK_BONUS = 7.5  # see docs/DECISIONS.md
+NON_BUSY_DAY_QUICK_FALLBACK_PENALTY = 0.1  # see docs/DECISIONS.md
 ENJOYMENT_WEIGHT_PER_STAR = 0.1
 
 
@@ -83,6 +84,9 @@ def score_recipe(
             weight *= BUSY_DAY_SLOW_WEIGHT
         if recipe.is_quick_fallback:
             weight *= BUSY_DAY_QUICK_FALLBACK_BONUS
+    else:
+        if recipe.is_quick_fallback:
+            weight *= NON_BUSY_DAY_QUICK_FALLBACK_PENALTY
 
     weight *= 1 + (recipe.family_enjoyment * ENJOYMENT_WEIGHT_PER_STAR)
 

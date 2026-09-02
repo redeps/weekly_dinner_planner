@@ -1447,3 +1447,147 @@ strengthen the quick-fallback preference and confirm graceful fallback,
 not to redesign the cook-time gradient above the busy-day threshold.
 Revisit if households actually hit this scenario often enough for the
 flat 25-vs-60-min tie to matter in practice.
+
+## 2026-09-02 — Milestone 15: Email the Weekly Plan
+
+A manually-triggered button (not a scheduled job) that sends the current
+week plan to a small, household-maintained list of recipient email
+addresses. Implementation choices, on top of the investigation this
+milestone was built from:
+
+**`email_recipients` is a new table (one row per address), not a
+JSON-encoded list on `app_settings`.** Every table in this schema,
+without exception, uses plain scalar columns — nothing anywhere stores a
+JSON blob. `app_settings` itself is documented as a single-row table for
+settings that don't fit a relational shape (currently just
+`default_household_size`, a lone scalar); a recipient list is the
+opposite shape — naturally one independent, addable/removable row per
+item, closer to `recipe_ingredients`'s reason for being kept separate
+from `recipes.instructions` than to anything `app_settings` already
+holds. `UNIQUE` on the `email` column makes "already added" a DB-level
+`ON CONFLICT DO NOTHING`, not app-level dedup logic.
+
+**Sending uses stdlib `smtplib` + `email.message.EmailMessage` against an
+SMTP provider (e.g. Gmail with an app password), not a mail-API SDK.**
+Matches the precedent already set for Ollama and Gemini (`urllib`, no new
+dependency for a handful of request/response calls) rather than R2's
+`boto3` exception — SMTP auth is a plain login, not request-signing, so
+there's no equivalent to AWS Signature V4's genuine hand-rolling risk
+that justified pulling in `boto3` for R2. Confirmed current before
+relying on it (same diligence as the earlier Gemini model-name check):
+`smtp.gmail.com` on port 587 (STARTTLS) or 465 (implicit TLS); a personal
+Gmail account requires an app password, which itself requires 2-Step
+Verification (plain-password SMTP access was retired in 2022); free-tier
+limits are 500 recipients/day and 100 per single message — a weekly send
+to a handful of household addresses is trivially within this.
+
+**One SMTP message per recipient, not one message with everyone in
+`To`.** Two reasons, both real: it isolates a single bad address from
+sinking the whole send (see the failure-handling entry below), and it
+keeps the household's recipient list from being exposed to every other
+recipient in a shared header — a small privacy consideration for what
+could plausibly be a list that includes extended family or a babysitter,
+not just the household's own accounts.
+
+**`[smtp]` secrets section, presence-detected via `st.secrets.get("smtp")`
+— matching R2's pattern, not `AI_ASSIST_BACKEND`'s.** Same reasoning
+already recorded for R2: this is an environment-determined capability
+(configured in production, typically absent in local dev) rather than a
+deliberate per-developer choice between equally-valid backends the way
+Ollama-vs-Gemini genuinely is, so auto-detecting from secret presence
+needs no separate on/off flag to keep in sync.
+
+**Failure handling deliberately differs from both existing precedents in
+this codebase — R2 photo sync's always-swallow, and
+`save_recipe_photo`'s `PhotoBackupError` raise-on-specific-failure — and
+it's worth naming exactly what's different about each of the three
+situations, not just noting that they differ:**
+
+- **R2 sync (always swallowed):** a background bonus riding along on an
+  operation (the local photo save) that has already fully succeeded by
+  the time R2 is touched. "R2 failed" and "R2 was never configured" are
+  the *same* functional outcome from the caller's perspective in that
+  moment — local-only is itself a fully legitimate, everyday mode, not a
+  degraded one. There's nothing to tell the user because nothing about
+  their action is incomplete.
+- **`PhotoBackupError` (raised for this one specific failure):** the same
+  R2-sync operation, but raised instead of swallowed because the *local*
+  copy silently stops being reliable in the real deployment (Streamlit
+  Community Cloud's disk doesn't survive a restart) — so silence here
+  would let data quietly vanish later, with no signal at the moment that
+  could have mattered. It's still fundamentally a single write with one
+  boolean verdict (durable or not) for one file.
+- **Emailing the plan (per-address success/failure reported, nothing
+  swallowed, nothing single-outcome):** this button has no legitimate
+  silent/degraded-but-fine mode at all — there's no local fallback for an
+  email; either it left the household's outbox for a given address or it
+  didn't, and unlike R2 syncing a photo, this is the sole, explicit thing
+  the user just clicked and is waiting on, not a side effect of something
+  else that already succeeded. It's also not a single-item operation
+  the way both R2 cases are — it's an inherent fan-out over N independent
+  recipients, each with its own success or failure. Collapsing that into
+  one verdict would actively mislead someone: swallowing would hide a
+  failing address's problem from the one person who could fix a typo;
+  raising on the first failure would hide that the other addresses
+  actually went out fine. Per-address reporting is a third shape, not a
+  compromise between the other two — it's the correct shape specifically
+  because this operation is a fan-out where R2 sync and the photo backup
+  case were both single-item.
+
+**Known unverified risk, flagged rather than assumed away — whether
+Streamlit Community Cloud's outbound network actually permits SMTP on
+port 587/465 at all.** Researched rather than assumed: some cloud
+platforms deliberately block outbound SMTP as an anti-spam measure, and
+evidence specific to Streamlit Community Cloud is genuinely mixed — some
+reports of Gmail SMTP sends working from a deployed app, others of email
+silently failing to arrive once deployed despite working locally and
+logging no exception, in at least one case attributed to the receiving
+mail server flagging the sending host rather than a confirmed outbound
+port block. Neither this environment's local dev nor the mocked
+`smtplib` tests below can surface a real network-level block either way
+— the only way to actually confirm this is a real deployed test send
+once Milestone 13's hosted deployment is live. Not treated as blocking
+this milestone (the feature is fully correct and tested for local/dev
+use, and mirrors this project's other optional-hosted-dependency
+features in degrading to a clear on-click error rather than breaking
+anything if it turns out not to work deployed) but explicitly not
+verified as working in the actual target hosted environment.
+
+## 2026-09-02 — Non-busy-day quick-fallback penalty
+
+Companion piece to the busy-day bonus above, implemented alongside two
+other related changes (ingredient scaling extended to Recipe Detail/Cook
+Mode, and special-occasion recipes — see the two entries below) since the
+special-occasion scaling exemption depends on the ingredient-scaling
+helper existing first; this entry covers the penalty on its own.
+
+Investigated a reported annoyance (quick-fallback recipes appearing on
+non-busy days) before changing anything: `score_recipe()` never read
+`is_quick_fallback` outside the `if is_busy:` block, so on a non-busy day
+a quick-fallback recipe was chosen at essentially the same rate as any
+other recipe of similar rating — measured against the real dev DB (11
+recipes, 3 flagged), **27.8%**, matching the 27.3% uniform baseline for
+3-of-11 almost exactly.
+
+**New constant, mirroring the busy-day bonus in reverse:**
+`NON_BUSY_DAY_QUICK_FALLBACK_PENALTY = 0.1`, multiplied into `score_recipe`'s
+weight when `is_quick_fallback` and *not* `is_busy`. 0.1 was the middle of
+three tested values (0.2 / 0.1 / 0.05 — same selection methodology as the
+busy-day bonus's 5.0/7.5/10.0), bringing a single non-busy day's P(any
+quick-fallback chosen) down to 3.7% from the 27.8% baseline. Twice as
+strong as the existing `ROTATION_PENALTY_WEIGHT` (0.2) already in this
+file — appropriate since this is more of a nuisance to actively suppress
+than what rotation-avoidance addresses — but deliberately not zero, so a
+quick-fallback recipe can still occasionally win on real merit (higher
+enjoyment rating, seasonal match).
+
+**Confirmed safe by construction, not just by simulation:** 8 of the dev
+DB's 11 recipes are non-quick-fallback, comfortably more than the 7 a week
+needs, so the existing no-repeat-within-week guarantee can never be
+threatened by this penalty regardless of its strength. Verified anyway,
+against the real shipped `generate_week_plan()`, 500 runs (0 busy days,
+recipe set shaped like the real dev DB — 8 regular / 3 quick-fallback):
+**every day always filled, no repeat ever occurred**, and quick-fallback
+recipes appeared in only 38.6% of weeks (average 0.44/week), down from a
+baseline where they'd appear in nearly every week (97.4%, measured during
+the investigation against the same shape).
