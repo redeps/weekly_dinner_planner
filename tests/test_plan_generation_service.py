@@ -406,6 +406,64 @@ def test_generate_week_plan_full_non_busy_week_never_forces_repeat_or_unfilled_d
         assert len({d.recipe_id for d in days}) == 7, f"repeat occurred at seed={seed}"
 
 
+# --- generate_week_plan: special-occasion hard exclusion (Part 3) ---
+
+
+def test_generate_week_plan_never_auto_selects_special_occasion_recipes(conn):
+    for i in range(3):
+        make_recipe(conn, name=f"Special {i}", is_special_occasion=True)
+    for i in range(8):
+        make_recipe(conn, name=f"Regular {i}", is_special_occasion=False)
+
+    for seed in range(20):
+        week_plan_id = plan_service.generate_week_plan(
+            conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(seed)
+        )
+        days = plan_service.list_plan_days(conn, week_plan_id)
+        assert len(days) == 7
+        assert all(d.recipe_id is not None for d in days)
+        assert len({d.recipe_id for d in days}) == 7
+        chosen_names = {
+            recipe_service.get_recipe(conn, d.recipe_id).name for d in days
+        }
+        assert not any(name.startswith("Special") for name in chosen_names), (
+            f"a special-occasion recipe was auto-selected at seed={seed}: {chosen_names}"
+        )
+
+
+def test_generate_week_plan_raises_when_only_special_occasion_recipes_exist(conn):
+    make_recipe(conn, name="Holiday Roast", is_special_occasion=True)
+    with pytest.raises(ValueError):
+        plan_service.generate_week_plan(
+            conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar()
+        )
+
+
+def test_swap_day_recipe_can_select_a_special_occasion_recipe(conn):
+    """Swap's candidate pool must NOT exclude is_special_occasion — only
+    automatic generation does."""
+    original = make_recipe(conn, name="Original")
+    special = make_recipe(conn, name="Holiday Roast", is_special_occasion=True)
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(0)
+    )
+    monday = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == "monday"
+    )
+    # Only two recipes exist total, and Monday is necessarily `original`
+    # (generate_week_plan can't have auto-picked `special`) -- so the
+    # special-occasion recipe is the *only* swap candidate. If swap
+    # filtered it out like generate_week_plan does, this would raise
+    # (empty candidate list falling back to the unfiltered list would
+    # re-include `original`, which `choose_recipe` could then return
+    # instead -- so a passing assertion here specifically proves the
+    # special-occasion recipe was a real, reachable candidate).
+    assert monday.recipe_id == original.id
+    result = plan_service.swap_day_recipe(conn, monday.id, rng=random.Random(0))
+    assert result.id == special.id
+    assert result.is_special_occasion is True
+
+
 def test_generate_week_plan_allows_repeats_when_recipe_pool_too_small(conn):
     make_recipe(conn, name="Only One")
     week_plan_id = plan_service.generate_week_plan(

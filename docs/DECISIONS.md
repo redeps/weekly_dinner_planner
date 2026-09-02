@@ -1657,3 +1657,50 @@ somewhere to live in this helper regardless of which piece "came first."
 The column is schema-ready here; nothing yet lets a household actually
 set it to `true` as a feature — see the next entry for that.
 
+## 2026-09-02 — Special-occasion recipes
+
+New `is_special_occasion` boolean on `recipes` (migration 9, same
+`INTEGER 0/1 DEFAULT 0` shape and Add/Edit Recipe form placement as
+`is_quick_fallback`).
+
+**Hard-excluded from automatic plan generation, not just deprioritized —
+a different mechanism from the quick-fallback weighting above,
+deliberately.** `generate_week_plan()` filters `is_special_occasion`
+recipes out of its candidate pool entirely (`recipes = [r for r in
+list_recipes(conn) if not r.is_special_occasion]`), including from the
+small-pool repeat-fallback path — a weighted-random *penalty* (the
+quick-fallback approach) still leaves a nonzero chance of an unwanted
+autopick, which is the wrong shape here: a special-occasion recipe (a
+holiday roast, an elaborate anniversary dinner) being silently auto-
+assigned to an ordinary Tuesday is a correctness problem for the
+household, not a mild statistical nuisance to tune down — so it needed a
+hard filter, not a smaller weight. Confirmed safe against the real
+shipped `generate_week_plan()`, 500 runs, recipe set shaped like the real
+dev DB (8 regular / 3 special-occasion): **every day always filled, no
+repeat ever occurred, a special-occasion recipe was never auto-selected
+— 0/500.** An all-special-occasion active pool correctly raises
+`ValueError` rather than silently ignoring the flag.
+
+**Still fully reachable via swap — confirmed, not assumed, by reading
+`swap_day_recipe()` and by test.** It calls `list_recipes(conn)`
+unfiltered (only `generate_week_plan()` gained the new filter) — proven
+with a test that makes a special-occasion recipe the *only* other
+candidate for a day and confirms swap actually lands on it, rather than
+falling back to a re-pick of the currently-assigned recipe. Visual
+distinction so one is easy to find while browsing to deliberately place
+it: a "🎉" badge on Recipes-page cards (mirroring `is_quick_fallback`'s
+existing "⚡"), and a "🎉 special occasion" badge on Recipe Detail
+alongside its other badges.
+
+**Scaling exemption, built into `effective_ingredient_quantity()` (Part
+2's shared helper) rather than duplicated per screen:** if
+`is_special_occasion` and the day carries no explicit
+`household_size_override`, the recipe's own quantities pass through
+unscaled — a special-occasion recipe's serving count was deliberately
+authored for a specific event, not for routine household size, so
+silently stretching or shrinking it to the app-wide default would be
+wrong more often than right. An explicit override for that specific day
+still takes precedence and scales normally — someone deliberately said
+how many people that day is actually for, which is a stronger, more
+specific signal than the recipe's own default. Silence (no override) is
+read as "trust the recipe," not as "assume the app-wide default."

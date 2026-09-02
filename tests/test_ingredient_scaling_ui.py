@@ -193,6 +193,15 @@ def test_special_occasion_recipe_scaled_when_override_set(isolated_db):
     assert "Originally serves 2, scaled to 6." in [c.value for c in at.caption]
 
 
+def test_recipe_detail_shows_special_occasion_badge(isolated_db):
+    conn = database.get_connection()
+    recipe_id = make_recipe(conn, name="Holiday Roast", is_special_occasion=True)
+    conn.close()
+
+    at = _load(RECIPE_DETAIL_PAGE, selected_recipe_id=recipe_id)
+    assert any("special occasion" in c.value for c in at.caption)
+
+
 # --- Cook Mode: same scaling behavior, plus the "not scaled" flag ---
 
 

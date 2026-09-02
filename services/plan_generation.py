@@ -129,11 +129,18 @@ def generate_week_plan(
     Avoids repeating a recipe within the same week when enough distinct
     active recipes exist to do so; falls back to allowing a repeat only if
     the active recipe pool is smaller than 7 (see docs/DECISIONS.md).
+
+    `is_special_occasion` recipes are hard-excluded from this automatic
+    pool entirely (including the small-pool repeat fallback above) — they
+    only ever get assigned to a day deliberately, via swap, never picked
+    for you (see docs/DECISIONS.md).
     """
     rng = rng or random.Random()
-    recipes = list_recipes(conn)
+    recipes = [r for r in list_recipes(conn) if not r.is_special_occasion]
     if not recipes:
-        raise ValueError("No active recipes to build a plan from.")
+        raise ValueError(
+            "No active, non-special-occasion recipes to build a plan from."
+        )
 
     last_cooked_by_recipe = last_cooked_dates(conn)
     today = dt.date.today()

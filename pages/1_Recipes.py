@@ -53,6 +53,8 @@ else:
                 title = recipe.name
                 if recipe.is_quick_fallback:
                     title += " ⚡"
+                if recipe.is_special_occasion:
+                    title += " 🎉"
                 st.subheader(title)
                 st.caption(
                     f"{recipe.cook_time_minutes} min · "

@@ -55,6 +55,8 @@ if photos.photo_exists(recipe.photo_path):
 badges = f"{recipe.cook_time_minutes} min · {'⭐' * recipe.family_enjoyment} · {recipe.seasonality}"
 if recipe.is_quick_fallback:
     badges += " · ⚡ quick fallback"
+if recipe.is_special_occasion:
+    badges += " · 🎉 special occasion"
 st.caption(badges)
 
 if st.button("▶ Start Cooking", type="primary"):

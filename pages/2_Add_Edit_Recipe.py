@@ -236,6 +236,11 @@ is_quick_fallback = st.checkbox(
     "Quick-fallback recipe (near-zero-effort option)",
     value=existing.is_quick_fallback if existing else False,
 )
+is_special_occasion = st.checkbox(
+    "Special-occasion recipe (excluded from automatic plan generation; "
+    "still selectable via swap)",
+    value=existing.is_special_occasion if existing else False,
+)
 servings = st.number_input("Servings", min_value=1, step=1, key="af_servings")
 
 st.subheader("Ingredients")
@@ -361,6 +366,7 @@ if submitted:
             family_enjoyment=int(family_enjoyment),
             seasonality=seasonality,
             is_quick_fallback=is_quick_fallback,
+            is_special_occasion=is_special_occasion,
             servings=int(servings),
             instructions=instructions or None,
             notes=notes or None,
