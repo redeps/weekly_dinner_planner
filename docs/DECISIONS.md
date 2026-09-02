@@ -878,3 +878,88 @@ over total silence for comparatively little code. If this turns out to
 be insufficient in practice (households not noticing/acting on the
 warning), a retry queue is the natural next step — revisit then, not
 speculatively now.
+
+## 2026-09-02 — Add Recipe photo-import: two bugs found, not one
+
+Investigated a reported bug ("uploading a photo to auto-fill the form
+says 'Paste a recipe URL or some recipe text first'") before changing
+anything. Turned out to be two independent, unrelated bugs stacked on top
+of each other — fixing only the first would have left photo import still
+completely non-functional.
+
+**Bug 1 — button routing.** `pages/2_Add_Edit_Recipe.py`'s "Import"
+button only ever reads the text/URL field (`import_input`); the photo
+uploader and its own "Extract from Photo" button live in a separate `if
+ai_assist.is_photo_import_available():` block below, with no shared
+state check between them. A user who uploads a photo and clicks "Import"
+(the first, more prominent button) gets the text-only error, even though
+their photo uploaded successfully and is still sitting in the widget
+afterward. Reproduced exactly via `AppTest` before touching any code.
+Fixed by making "Import"'s empty-text branch check
+`st.session_state.get("ai_import_photo")` (the photo uploader was given
+an explicit key for this) and pointing the user at "Extract from Photo"
+instead, when a photo is present — confirmed empirically first that a
+keyed widget's value is available in `session_state` even before that
+widget's own `st.file_uploader(...)` line executes later in the same
+script run (Streamlit rehydrates widget state before user code runs each
+rerun). Kept as two separate buttons rather than merging them, matching
+this app's existing pattern of small, single-purpose actions elsewhere.
+
+**Bug 2 — `GEMINI_MODEL`'s default had gone stale.** Even after fixing
+bug 1 and clicking the *correct* "Extract from Photo" button, every
+attempt failed (silently, since `ai_assist._call_gemini()` deliberately
+catches every exception and returns `None` — see the AI Assist entries
+above). Traced past the generic "returns None" to the actual network
+call: `GEMINI_MODEL`'s default, `"gemini-2.0-flash"`, no longer exists —
+confirmed directly against the real configured key
+(`generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent`
+→ HTTP 404), while `gemini-flash-latest` against the same key and same
+prompt succeeds. This is exactly the staleness the Milestone 10
+implementation entry above already anticipated ("Google's model lineup
+moves faster than this file will be revisited") — it has now happened.
+Since photo import always uses Gemini regardless of `AI_ASSIST_BACKEND`
+(no local-model fallback exists for vision), this was a complete, silent
+failure of photo import for every user, not an edge case — text import
+wasn't hitting it in this environment only because `AI_ASSIST_BACKEND`
+defaults to `ollama`, which the deployed app won't have as an option.
+Fixed by changing the default to `gemini-flash-latest` — a `-latest`
+alias rather than pinning to a dated snapshot name, on the theory that an
+alias is more resistant to this exact failure recurring (notably,
+`gemini-2.5-flash` — a model the API's own `models.list` endpoint
+currently reports as available — *also* 404'd against the same key,
+which a pinned snapshot name would not have protected against either).
+Grepped the codebase for any other hardcoded Gemini model name before
+fixing: none found — both the text-generation path (`_generate`) and the
+photo path (`import_recipe_from_photo`) already read the same single
+`GEMINI_MODEL` module constant, so this was one fix, not two.
+
+**UX — the two upload widgets looked identical.** The AI-import photo
+uploader (analyzed once, discarded) and the recipe's own display-photo
+uploader (saved, shown everywhere) had no visual distinction: same widget
+chrome, same default file-size/type caption, near-identical wording, ~40
+lines apart. This is very plausibly *why* the button-routing confusion
+above happens in the first place — a user has no visual cue that these
+are two unrelated actions. Fixed with labeling/caption changes only, not
+a layout redesign: the AI-import uploader's label now states the outcome
+("📋 Or upload a photo to auto-fill this form (AI)") rather than just
+restating "a photo of a recipe" (which reads identically in purpose to
+the other widget), plus a one-line caption under it ("Used once to
+pre-fill the fields below, then discarded — not saved as the recipe's
+photo."); the display-photo uploader got a matching but distinct icon
+(🖼️) for contrast; and a `st.divider()` now sits between the whole
+"Import a recipe" expander and the "## Photo" section, reinforcing that
+everything above the line is a one-time drafting aid and everything below
+it is the recipe's permanent data.
+
+**Test coverage — `tests/test_recipe_photo_import_ui.py` (new).** Proves
+both bugs stay fixed at the UI level, not just "some function returns the
+right value in the abstract": (1) uploading a photo then clicking
+"Import" now shows the new, correct message, and the untouched case (no
+photo, no text) still shows the original message unchanged; (2) clicking
+"Extract from Photo" with `urllib.request.urlopen` mocked to raise the
+*exact* `HTTPError(..., 404, ...)` shape the dead model name actually
+produced degrades to the existing graceful message rather than crashing
+— mocking a bare `_call_gemini` return of `None` (as the pre-existing
+service-level tests in `tests/test_ai_assist_service.py` already do)
+would have passed even before bug 2 was ever found, since it never
+exercises the real HTTP-error path at all.
