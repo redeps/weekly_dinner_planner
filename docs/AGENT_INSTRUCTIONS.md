@@ -84,3 +84,19 @@ Small, milestone-scoped commits with a clear message. Don't bundle unrelated
 changes. Run `pytest` before committing. When a milestone is finished and
 tested, commit it before moving on to the next one — don't leave completed
 milestone work uncommitted.
+
+## 12. Reporting standard
+
+A "done" report must be evidence, not description. Every claim of the
+form "X exists," "X already handles this," "X doesn't need changing," or
+"tests pass" must be backed by the actual command run and its actual
+output, shown — not just the conclusion. Use past tense only for what was
+actually done and verified this session; anything not yet done stays
+explicitly future/conditional ("will," "would," "is planned"), never
+blended into the same voice as completed work. Test results are exact
+pass/fail counts, not "should pass" — and for anything touching shared or
+persistent state, confirm stability across a repeat run, not just one
+green result. If a prior report (this session or an earlier one) claimed
+something about the repo's state, re-verify it directly rather than
+repeating it. If a new check contradicts an earlier report, say so
+explicitly rather than quietly overwriting it.
