@@ -157,6 +157,26 @@ Before generating a plan, the user enters a simple 7-day calendar:
 This is input only — no recurring calendar sync, no external calendar
 integration.
 
+### Household size (Milestone 14)
+
+A global default household size (`app_settings.default_household_size`,
+editable on this screen) is used to scale ingredient quantities in the
+grocery list (see §11). Most weeks need nothing further — the calendar
+above is gated behind one extra week-level question so a normal week
+stays exactly as simple as before:
+
+> "Are there any days this week you're hosting or cooking for more than
+> your normal household?"
+
+- **No** (the common case): nothing further is shown. Every day scales to
+  the global default.
+- **Yes**: reveals a multiselect of the week's days, then a household-size
+  number input for each day selected — only those specific days scale
+  differently; deselecting a day clears its override. This is a per-day
+  override (`plan_days.household_size_override`), not a per-week one — a
+  household hosting on just one evening shouldn't have every other day's
+  grocery quantities thrown off.
+
 ## 8. Prepopulated Quick-Fallback Recipes
 
 The app ships with a handful of seeded recipes flagged
@@ -207,6 +227,17 @@ all seven days' recipes (summing quantities where units match).
 - **not** designed for use inside a store — no check-off state, no mobile
   "shopping mode." The user transcribes it to a handwritten list. Keep this
   screen simple: a clean, printable/readable list, nothing more.
+
+### Household-size scaling (Milestone 14)
+
+Each day's ingredient quantities are scaled by that day's effective
+household size (its own override from §7 if set, else the global default)
+relative to the recipe's own `servings`, *before* being summed across the
+week — not applied to Cook Mode's instruction text (§12), which stays
+free-text and unscaled. Scaled quantities are rounded to 2 decimal places
+for v1 — no fraction formatting or unit conversion. An ingredient with no
+quantity on the recipe (e.g. "salt to taste") can't be scaled and is
+flagged in the list rather than silently shown blank.
 
 ## 12. Cook Mode
 

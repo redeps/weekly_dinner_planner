@@ -9,7 +9,8 @@ The Foundation prototype (Milestone 0) does **not** yet create these tables —
 `database.py` currently only proves that SQLite is reachable from the app.
 Milestone 1 introduces `recipes`. Milestone 2 introduces
 `recipe_ingredients`. Milestone 4 introduces `week_plans` and `plan_days`.
-Milestone 7 introduces `cook_history`.
+Milestone 7 introduces `cook_history`. Milestone 14 introduces
+`app_settings` and `plan_days.household_size_override`.
 
 ## RECIPES
 
@@ -67,9 +68,25 @@ recipe live together here.
 | is_busy              | boolean   | from the weekly calendar input                     |
 | dinner_ready_time    | time      | default 18:00, overridable per day                 |
 | recipe_id            | integer FK → recipes.id, nullable | the assigned recipe for this day |
+| household_size_override | integer, nullable | Milestone 14 — this day's household size, if hosting/cooking for more than usual; `NULL` means "use `app_settings.default_household_size`" |
 
 Swapping a day's recipe = updating `recipe_id` on its `plan_days` row. This
 does not touch other days or require regenerating the week.
+
+## APP_SETTINGS
+
+Milestone 14. A single row (`id = 1`), the same one-row pattern as
+`database.py`'s `schema_version` table — not a generic key/value table.
+Holds only the global default household size; add further columns here
+only when a future milestone actually needs another setting, not
+speculatively (`docs/AGENT_INSTRUCTIONS.md` §7). The row is lazily seeded
+on first read by `services/settings.py` rather than by a migration-time
+INSERT.
+
+| column                  | type      | notes                                    |
+|-------------------------|-----------|----------------------------------------------|
+| id                      | integer PK | always `1` — single-row table               |
+| default_household_size | integer   | NOT NULL, default 4 — the household size used to scale a day's ingredients when that day has no `plan_days.household_size_override` |
 
 ## COOK_HISTORY
 
@@ -150,4 +167,6 @@ RECIPES ──< RECIPE_INGREDIENTS
 WEEK_PLANS ──< PLAN_DAYS >── RECIPES
 
 RECIPES ──< COOK_HISTORY >── PLAN_DAYS
+
+APP_SETTINGS  (standalone — no foreign keys; a single global-config row)
 ```

@@ -1184,3 +1184,92 @@ real baseline; caught and corrected before committing, not left wrong).
 for the cap and the combined-photos flow (1 existing assertion in that
 file also updated for the reworded message — modified, not counted as an
 addition).
+
+## 2026-09-02 — Milestone 14: household-size scaling — data model, rounding, and real coverage
+
+**Override lives on `plan_days`, not `week_plans`.** Cooking for extra
+people is a per-day event (hosting one evening, not the whole week), so a
+single week-level override would either force-scale every day or require
+a second, separate per-day exception mechanism anyway. Putting
+`household_size_override` directly on `plan_days` (nullable integer,
+`NULL` = "use the global default") needs no second mechanism and matches
+the existing per-day override precedent already on that table
+(`dinner_ready_time` is "default 6pm, overridable per day" the same way).
+
+**UI stays gated at the week level despite the override being per-day.**
+The Weekly Calendar Input screen (`pages/4_Weekly_Calendar.py`) asks one
+yes/no question after the existing per-day rows — "Are there any days
+this week you're hosting or cooking for more than your normal
+household?" — defaulting to "No," which shows nothing further. Only
+"Yes" reveals a multiselect of the week's days and a size input per day
+selected, reusing the same `st.columns` row layout the busy/dinner-time
+loop above it already uses. Deselecting a day (or flipping back to "No")
+clears its override by simply not including it when the day list is
+rebuilt from scratch each render — no separate "clear" bookkeeping. This
+keeps the common case (no extra guests) visually identical to before the
+milestone, at the cost of one extra click to reach the override UI on the
+weeks that need it.
+
+**`app_settings` is a single-row table, not key/value.** Mirrors
+`database.py`'s existing `schema_version` one-row pattern instead of
+introducing a new generic-settings-table idiom. Holds only
+`default_household_size` — no other settings were added speculatively
+(`docs/AGENT_INSTRUCTIONS.md` §7); a future setting gets its own migration
+when a milestone actually needs it. The row is lazily seeded on first
+read (`services/settings.get_default_household_size()`) rather than by a
+migration-time INSERT, so the migration itself (`database.py` version 6)
+stays a bare `CREATE TABLE IF NOT EXISTS`, consistent with every other
+migration block in that file.
+
+**Real coverage, from real imported recipes — not fabricated, not
+assumed.** Direct network access to most recipe sites from this
+devcontainer is blocked (`allrecipes.com`, `simplyrecipes.com` etc. all
+returned `HTTP 402` from the sandbox's egress proxy) — `bbcgoodfood.com`
+worked. Imported 8 real recipes through the actual pipeline
+`pages/2_Add_Edit_Recipe.py` uses on Save (`recipe_import.parse_recipe_url()`
+→ per-ingredient `categorization.suggest_category()` → `create_recipe()` +
+`replace_recipe_ingredients()`, run as a one-off script against the real
+`public` schema, not a test schema) — chicken curry, chicken fajitas, beef
+stroganoff, shepherd's pie, classic lasagne, Thai green curry, mushroom
+risotto, creamy mushroom pasta. Result: **105 ingredient rows, 99 (94.3%)
+with a usable quantity, 6 (5.7%) without** — all 6 genuine
+quantity-less garnish/seasoning lines the parser correctly declines to
+guess a number for: "thumb-sized piece of ginger grated," "small pack
+coriander finely chopped," "large splash Worcestershire sauce," "large
+handful basil leaves torn (optional)," "handful parsley leaves, chopped,"
+and the serving suggestion "naan breads or cooked basmati rice, to
+serve." These are exactly the rows the grocery list now flags as "not
+scaled" instead of silently showing a blank amount.
+
+**`build_grocery_list()`'s aggregation logic itself needed no change to
+handle scaled quantities correctly — confirmed, not assumed.** Its
+name/unit grouping key is identity-based (case/whitespace-normalized name
++ unit + store category), entirely independent of the quantity value, so
+decimal scaled quantities sum into the right bucket exactly like the
+clean integers it was already tested against. Verified directly: built a
+week plan reusing four of the real imported recipes' actual "olive oil,
+tbsp" lines, scaled per-day by four different household-size ratios
+(6/4, 4/6, 4/4, 5/4) the way the new code does, and ran the real
+`build_grocery_list()` against it — the four lines correctly merged into
+one `olive oil` entry.
+
+What *did* need fixing: without rounding, `1.0 * (4/6)` and similar
+non-terminating ratios propagate their full floating-point tail into the
+aggregated total — the same test produced `6.6666667 tbsp` before
+rounding was added, which would read as broken to a user. Fixed by
+rounding to 2 decimal places in two places, not one: once when a day's
+scaled quantity is computed (`round(ingredient.quantity * scale_factor,
+2)`), and again on the running aggregate after each addition
+(`round(entry["quantity"] + scaled_quantity, 2)`) — belt-and-suspenders,
+since summing several already-rounded 2-decimal floats can itself
+reintroduce a binary-float tail (e.g. some `0.1 + 0.2`-shaped case) that
+rounding only the per-day contribution wouldn't catch. With both in
+place, the same four-recipe scenario above produces a clean `6.67 tbsp`.
+
+**Verification:** `pytest` full suite, 3 consecutive runs, **298/298
+passed each time** — up from a pre-milestone baseline of **278/278**
+(re-verified directly via `git stash -u` immediately before this entry,
+not assumed). 20 net new tests: 6 in `tests/test_settings_service.py`, 6
+in `tests/test_grocery_list_service.py`, 6 in the new
+`tests/test_household_scaling_ui.py`, 1 each in `test_calendar_service.py`
+and `test_plan_generation_service.py`.

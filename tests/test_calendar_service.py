@@ -28,3 +28,8 @@ def test_build_default_week_calendar_returns_independent_objects_each_call():
     second = build_default_week_calendar()
     first[0].is_busy = True
     assert second[0].is_busy is False
+
+
+def test_build_default_week_calendar_defaults_household_size_override_to_none():
+    calendar = build_default_week_calendar()
+    assert all(day.household_size_override is None for day in calendar)

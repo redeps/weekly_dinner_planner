@@ -14,7 +14,10 @@ def build_default_week_calendar() -> list[CalendarDay]:
     default time (6:00 PM) every day."""
     return [
         CalendarDay(
-            day_of_week=day, is_busy=False, dinner_ready_time=DEFAULT_DINNER_READY_TIME
+            day_of_week=day,
+            is_busy=False,
+            dinner_ready_time=DEFAULT_DINNER_READY_TIME,
+            household_size_override=None,
         )
         for day in DAYS_OF_WEEK
     ]

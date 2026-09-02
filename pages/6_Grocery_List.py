@@ -46,4 +46,6 @@ else:
                 if part
             )
             line = f"{amount} {item.name}".strip() if amount else item.name
+            if item.quantity is None:
+                line += " _(not scaled — no quantity on the recipe)_"
             st.write(f"- {line}")

@@ -162,8 +162,9 @@ def generate_week_plan(
             conn.execute(
                 """
                 INSERT INTO plan_days (
-                    week_plan_id, day_of_week, date, is_busy, dinner_ready_time, recipe_id
-                ) VALUES (%s, %s, %s, %s, %s, %s)
+                    week_plan_id, day_of_week, date, is_busy, dinner_ready_time, recipe_id,
+                    household_size_override
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     week_plan_id,
@@ -172,6 +173,7 @@ def generate_week_plan(
                     int(cal_day.is_busy),
                     cal_day.dinner_ready_time.strftime("%H:%M"),
                     chosen.id,
+                    cal_day.household_size_override,
                 ),
             )
 
@@ -195,6 +197,7 @@ def _row_to_plan_day(row: dict) -> PlanDay:
         is_busy=bool(row["is_busy"]),
         dinner_ready_time=row["dinner_ready_time"],
         recipe_id=row["recipe_id"],
+        household_size_override=row["household_size_override"],
     )
 
 

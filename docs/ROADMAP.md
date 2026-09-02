@@ -211,3 +211,41 @@ can't be verified independently; see the "Phase 1/2 merge" entry in
 Do not begin this milestone, or introduce any paid service beyond the
 already-approved Gemini free tier, before the local prototype is stable and
 the earlier milestones are complete.
+
+## Milestone 14 — Household-Size Scaling ✅
+
+Scales ingredient quantities (and the grocery list built from them) to
+however many people a given day is actually feeding — not every week
+uniformly, and not Cook Mode's instruction text.
+
+- `plan_days.household_size_override` (nullable integer) — set only for
+  the specific day(s) a household is hosting or cooking for more than
+  usual; `NULL` means "use the global default." Lives on `plan_days`, not
+  `week_plans`, because the override is per-day, not per-week.
+- `app_settings` — a new single-row table (`id=1`), holding the global
+  default household size (`services/settings.py`), same one-row pattern
+  as `schema_version`.
+- Weekly Calendar Input screen: after the existing per-day busy/dinner-
+  time inputs, one week-level yes/no question — "Are there any days this
+  week you're hosting or cooking for more than your normal household?"
+  No (the common case) shows nothing further. Yes reveals a multiselect
+  of the week's days, then a household-size number input per selected
+  day — deselecting a day clears its override back to `NULL`.
+- Scaling applies to ingredient quantities in the grocery list only
+  (`services/grocery_list.py`) — each day's ingredients are scaled by
+  that day's effective household size relative to the recipe's own
+  `servings`, *before* being summed across the week, then rounded to 2
+  decimal places (both per-day and on the aggregated total — see
+  docs/DECISIONS.md for why both). An ingredient with no quantity (e.g.
+  "salt to taste") can't be scaled and is flagged in the grocery list
+  rather than silently shown blank.
+- Coverage, from 8 real recipes imported through the actual Add Recipe
+  flow (URL import — `services/recipe_import.py`'s structured-data
+  parser — against real recipe pages): **94.3% (99/105) of ingredient
+  rows had a usable quantity for scaling**; the remaining 5.7% (6 rows)
+  were quantity-less garnish/seasoning lines ("a handful of parsley,"
+  "thumb-sized piece of ginger") that the parser correctly can't
+  quantify and that the grocery list now flags instead of silently
+  showing blank. See docs/DECISIONS.md for the full investigation,
+  including confirmation that `build_grocery_list()`'s existing name/unit
+  aggregation logic is unaffected by scaled (decimal) quantities.

@@ -5,15 +5,26 @@ week plan's 7 days, grouped by store category (see docs/PRODUCT_SPEC.md
 current `plan_days` + `recipe_ingredients` every time it's built, so a
 swapped day is reflected automatically the next time it's viewed — no
 check-off state or shopping-mode UI, per docs/DECISIONS.md.
+
+Household-size scaling (Milestone 14): each day's ingredient quantities
+are scaled by that day's effective household size (its own
+`household_size_override` if set, else the global default — see
+services/settings.py) relative to the recipe's own `servings`, before
+being summed across days. An ingredient with no quantity (e.g. "salt to
+taste") can't be scaled and is passed through unchanged — see
+docs/DECISIONS.md for why simple 2-decimal rounding is applied both per
+day and to the aggregated total, confirmed against real scaled data.
 """
 
-import sqlite3
+import psycopg
 from dataclasses import dataclass
 from typing import Optional
 
 from models import STORE_CATEGORIES
 from services.ingredients import list_ingredients
 from services.plan_generation import list_plan_days
+from services.recipes import get_recipe
+from services.settings import effective_household_size, get_default_household_size
 
 
 @dataclass
@@ -25,7 +36,7 @@ class GroceryItem:
 
 
 def build_grocery_list(
-    conn: sqlite3.Connection, week_plan_id: int
+    conn: psycopg.Connection, week_plan_id: int
 ) -> dict[str, list[GroceryItem]]:
     """Aggregate ingredients across a week plan's 7 assigned recipes.
 
@@ -36,10 +47,19 @@ def build_grocery_list(
     omitted, items sorted alphabetically within each category.
     """
     aggregated: dict[tuple, dict] = {}
+    default_household_size = get_default_household_size(conn)
 
     for plan_day in list_plan_days(conn, week_plan_id):
         if plan_day.recipe_id is None:
             continue
+        recipe = get_recipe(conn, plan_day.recipe_id)
+        if recipe is None:
+            continue
+        day_size = effective_household_size(
+            plan_day.household_size_override, default_household_size
+        )
+        scale_factor = day_size / recipe.servings
+
         for ingredient in list_ingredients(conn, plan_day.recipe_id):
             name_key = ingredient.name.strip().lower()
             unit_key = ingredient.unit.strip().lower() if ingredient.unit else None
@@ -54,7 +74,8 @@ def build_grocery_list(
                 },
             )
             if ingredient.quantity is not None:
-                entry["quantity"] = (entry["quantity"] or 0) + ingredient.quantity
+                scaled_quantity = round(ingredient.quantity * scale_factor, 2)
+                entry["quantity"] = round((entry["quantity"] or 0) + scaled_quantity, 2)
 
     grouped: dict[str, list[GroceryItem]] = {category: [] for category in STORE_CATEGORIES}
     for entry in aggregated.values():

@@ -267,6 +267,20 @@ def test_generate_week_plan_carries_calendar_input_per_day(conn):
     assert days["monday"].dinner_ready_time == "18:00"
 
 
+def test_generate_week_plan_carries_household_size_override_per_day(conn):
+    make_recipe(conn)
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["wednesday"].household_size_override = 8
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(20)
+    )
+    days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+    assert days["wednesday"].household_size_override == 8
+    assert days["monday"].household_size_override is None
+
+
 def test_generate_week_plan_avoids_repeats_when_enough_recipes(conn):
     for i in range(7):
         make_recipe(conn, name=f"Recipe {i}")

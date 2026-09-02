@@ -107,9 +107,35 @@ SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         )
         """,
     ),
+    (
+        6,
+        # Single-row settings table (id=1), same one-row pattern as
+        # schema_version above. Holds only the global default household
+        # size — see docs/DATA_MODEL.md and services/settings.py for the
+        # lazy-seed-on-read approach that keeps this migration a bare
+        # CREATE TABLE. Add new settings columns here only when a
+        # milestone actually needs them, not speculatively.
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            id INTEGER PRIMARY KEY,
+            default_household_size INTEGER NOT NULL DEFAULT 4
+        )
+        """,
+    ),
+    (
+        7,
+        "ALTER TABLE plan_days ADD COLUMN IF NOT EXISTS household_size_override INTEGER",
+    ),
 ]
 
-_EXPORT_TABLES = ["recipes", "recipe_ingredients", "week_plans", "plan_days", "cook_history"]
+_EXPORT_TABLES = [
+    "recipes",
+    "recipe_ingredients",
+    "week_plans",
+    "plan_days",
+    "cook_history",
+    "app_settings",
+]
 
 
 def schema_name_for(identity: object) -> str:
