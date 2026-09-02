@@ -126,6 +126,30 @@ SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         7,
         "ALTER TABLE plan_days ADD COLUMN IF NOT EXISTS household_size_override INTEGER",
     ),
+    (
+        8,
+        # One row per recipient email address, not a JSON list on
+        # app_settings — every other table in this schema is a plain
+        # relational shape (see docs/DECISIONS.md), and a recipient list
+        # is naturally add-one/remove-one, not a single blob to
+        # read-modify-write. UNIQUE makes "already added" a DB-level
+        # concern instead of app-level dedup logic.
+        f"""
+        CREATE TABLE IF NOT EXISTS email_recipients (
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT {_NOW_EXPR}
+        )
+        """,
+    ),
+    (
+        9,
+        # Same shape as is_quick_fallback (INTEGER 0/1, default 0) — see
+        # docs/DECISIONS.md for why special-occasion recipes are hard-
+        # excluded from automatic plan generation but not from swap or
+        # browsing.
+        "ALTER TABLE recipes ADD COLUMN IF NOT EXISTS is_special_occasion INTEGER NOT NULL DEFAULT 0",
+    ),
 ]
 
 _EXPORT_TABLES = [
@@ -135,6 +159,7 @@ _EXPORT_TABLES = [
     "plan_days",
     "cook_history",
     "app_settings",
+    "email_recipients",
 ]
 
 

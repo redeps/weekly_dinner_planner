@@ -28,6 +28,7 @@ def make_recipe(id=1, name="Recipe", seasonality="all-season", cook_time_minutes
         family_enjoyment=3,
         seasonality=seasonality,
         is_quick_fallback=False,
+        is_special_occasion=False,
         servings=4,
         instructions="Cook it.",
         notes=None,

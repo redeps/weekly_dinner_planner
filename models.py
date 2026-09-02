@@ -33,6 +33,7 @@ class Recipe:
     family_enjoyment: int
     seasonality: str
     is_quick_fallback: bool
+    is_special_occasion: bool
     servings: int
     instructions: Optional[str]
     notes: Optional[str]

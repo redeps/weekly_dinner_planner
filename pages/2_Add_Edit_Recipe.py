@@ -400,6 +400,11 @@ if submitted:
             update_recipe(conn, saved_id, photo_path=None)
 
         st.session_state["selected_recipe_id"] = saved_id
+        # No day context here (add/edit is always generic, never
+        # day-scoped) — clear any stale plan-day id so Recipe Detail
+        # doesn't show a scaled amount left over from an earlier
+        # Week-Plan-originated visit (see docs/DECISIONS.md).
+        st.session_state.pop("selected_plan_day_id", None)
         st.session_state.pop("edit_recipe_id", None)
         st.session_state.pop("ingredient_rows_for", None)
         if photo_error:

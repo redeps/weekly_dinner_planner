@@ -97,6 +97,7 @@ for plan_day in list_plan_days(conn, week_plan.id):
                     "View", key=f"view_day_{plan_day.id}", use_container_width=True
                 ):
                     st.session_state["selected_recipe_id"] = recipe.id
+                    st.session_state["selected_plan_day_id"] = plan_day.id
                     st.switch_page("pages/3_Recipe_Detail.py")
                 if action_cols[1].button(
                     "Swap", key=f"swap_day_{plan_day.id}", use_container_width=True
@@ -116,6 +117,7 @@ for plan_day in list_plan_days(conn, week_plan.id):
                     "Cook", key=f"cook_day_{plan_day.id}", use_container_width=True
                 ):
                     st.session_state["selected_recipe_id"] = recipe.id
+                    st.session_state["selected_plan_day_id"] = plan_day.id
                     st.switch_page("pages/8_Cook_Mode.py")
 
                 if not cooked:

@@ -1591,3 +1591,69 @@ recipe set shaped like the real dev DB — 8 regular / 3 quick-fallback):
 recipes appeared in only 38.6% of weeks (average 0.44/week), down from a
 baseline where they'd appear in nearly every week (97.4%, measured during
 the investigation against the same shape).
+
+## 2026-09-02 — Ingredient scaling extended to Recipe Detail and Cook Mode
+
+Confirmed directly: `pages/8_Cook_Mode.py` and `pages/3_Recipe_Detail.py`
+both fetched ingredients via `list_ingredients()` raw, completely
+independent of `services/grocery_list.py`'s household-size scaling — a
+genuine scoping gap from Milestone 14, not a deliberate exclusion
+(`docs/PRODUCT_SPEC.md` §11 explicitly exempts only Cook Mode's
+**instruction text** from scaling, saying nothing about its separate
+ingredients list).
+
+**Shared helper in `services/settings.py`, not three separate
+implementations:** `scale_ingredient_quantity()` (pure numeric scaling,
+replacing what was an inline calculation in `grocery_list.py`) and
+`effective_ingredient_quantity()` (the day-and-recipe-aware wrapper —
+resolves override-vs-default, then the special-occasion exemption below,
+then delegates to the pure scaler). All three screens — grocery list,
+Cook Mode, Recipe Detail — now call `effective_ingredient_quantity()`;
+`grocery_list.py`'s refactor is behavior-preserving (all 18 of its
+existing tests pass unchanged).
+
+**Day context — a real gap, not an edge case: nothing tracked "reached
+from a specific day" before this.** Grepped every
+`st.session_state["selected_recipe_id"] = ...` call site (5 total) —
+none set any plan-day identifier. New session-state key,
+`selected_plan_day_id`, set only by Week Plan's View/Cook action
+handlers (the only two places a `plan_day` is actually in scope).
+Recipe Detail's "Start Cooking" button needs no new code — leaving the
+key untouched means it naturally forwards into Cook Mode, so the chain
+Week Plan → View → Recipe Detail (scaled) → Start Cooking → Cook Mode
+(scaled, same day) works for free.
+
+**Leak-prevention: cleared, not just left unset, at every day-unaware
+entry point.** `st.session_state` persists for the whole session unless
+explicitly cleared, so a stale `selected_plan_day_id` from an earlier
+Week-Plan-originated visit would otherwise silently leak into a later
+generic-browsing visit and incorrectly scale an unrelated recipe.
+`pages/1_Recipes.py`'s "View" and `pages/2_Add_Edit_Recipe.py`'s
+post-save redirect — the two entry points that are always day-unaware —
+now explicitly `st.session_state.pop("selected_plan_day_id", None)`
+alongside setting `selected_recipe_id`. Verified end-to-end, not just
+argued: `tests/test_ingredient_scaling_ui.py` drives the actual
+sequence (view a day → scaled amount shown → browse generically via the
+real "View" button → confirm the key is cleared → re-open the same
+recipe → confirm the original, not the stale scaled, amount shows).
+
+**Stale/mismatched pointer guard.** A `selected_plan_day_id` is only
+trusted when `get_plan_day(...).recipe_id == recipe.id` — guards against
+a leftover pointer to a *different* recipe (e.g. the day's recipe was
+swapped in another tab) silently scaling the wrong recipe's amounts.
+Falls back to the unscaled/generic view rather than guessing.
+
+**"Not scaled" flag replicated into Cook Mode**, matching the existing
+grocery-list wording (`pages/6_Grocery_List.py`) exactly — shown when an
+ingredient has no quantity on the recipe at all (e.g. "salt to taste"),
+not when a special-occasion recipe is deliberately left unscaled (see
+the next entry) — those are different states and only the former is
+actually missing information.
+
+**`effective_ingredient_quantity()` was built special-occasion-aware from
+the start**, not extended later — `recipes.is_special_occasion` (the next
+entry) landed in the same change, since the scaling exemption needed
+somewhere to live in this helper regardless of which piece "came first."
+The column is schema-ready here; nothing yet lets a household actually
+set it to `true` as a feature — see the next entry for that.
+

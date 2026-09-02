@@ -51,3 +51,69 @@ def test_effective_household_size_uses_override_when_set():
 
 def test_effective_household_size_falls_back_to_default_when_none():
     assert settings_service.effective_household_size(None, 4) == 4
+
+
+# --- scale_ingredient_quantity ---
+
+
+def test_scale_ingredient_quantity_none_passes_through():
+    assert settings_service.scale_ingredient_quantity(None, recipe_servings=4, household_size=8) is None
+
+
+def test_scale_ingredient_quantity_scales_proportionally():
+    assert settings_service.scale_ingredient_quantity(2.0, recipe_servings=4, household_size=8) == 4.0
+
+
+def test_scale_ingredient_quantity_unchanged_when_sizes_equal():
+    assert settings_service.scale_ingredient_quantity(3.0, recipe_servings=4, household_size=4) == 3.0
+
+
+def test_scale_ingredient_quantity_rounds_to_two_decimals():
+    assert settings_service.scale_ingredient_quantity(1.0, recipe_servings=3, household_size=1) == 0.33
+
+
+# --- effective_ingredient_quantity ---
+
+
+def test_effective_ingredient_quantity_scales_normal_recipe():
+    result = settings_service.effective_ingredient_quantity(
+        2.0,
+        recipe_servings=4,
+        is_special_occasion=False,
+        household_size_override=None,
+        default_household_size=8,
+    )
+    assert result == 4.0
+
+
+def test_effective_ingredient_quantity_special_occasion_unscaled_with_no_override():
+    result = settings_service.effective_ingredient_quantity(
+        2.0,
+        recipe_servings=4,
+        is_special_occasion=True,
+        household_size_override=None,
+        default_household_size=20,
+    )
+    assert result == 2.0  # the recipe's own original quantity, untouched
+
+
+def test_effective_ingredient_quantity_special_occasion_scaled_when_override_set():
+    result = settings_service.effective_ingredient_quantity(
+        2.0,
+        recipe_servings=4,
+        is_special_occasion=True,
+        household_size_override=8,
+        default_household_size=20,
+    )
+    assert result == 4.0  # scaled to the explicit per-day override, not left alone
+
+
+def test_effective_ingredient_quantity_special_occasion_none_quantity_stays_none():
+    result = settings_service.effective_ingredient_quantity(
+        None,
+        recipe_servings=4,
+        is_special_occasion=True,
+        household_size_override=None,
+        default_household_size=20,
+    )
+    assert result is None

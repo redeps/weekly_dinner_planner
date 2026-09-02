@@ -62,4 +62,10 @@ else:
             with cols[2]:
                 if st.button("View", key=f"view_{recipe.id}"):
                     st.session_state["selected_recipe_id"] = recipe.id
+                    # Generic browsing has no day context — clear any
+                    # stale plan-day id left over from an earlier
+                    # Week-Plan-originated visit, or this recipe would
+                    # incorrectly show a scaled amount from a different
+                    # day (see docs/DECISIONS.md).
+                    st.session_state.pop("selected_plan_day_id", None)
                     st.switch_page("pages/3_Recipe_Detail.py")

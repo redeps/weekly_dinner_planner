@@ -58,6 +58,7 @@ def _row_to_recipe(row: dict) -> Recipe:
         family_enjoyment=row["family_enjoyment"],
         seasonality=row["seasonality"],
         is_quick_fallback=bool(row["is_quick_fallback"]),
+        is_special_occasion=bool(row["is_special_occasion"]),
         servings=row["servings"],
         instructions=row["instructions"],
         notes=row["notes"],
@@ -85,6 +86,7 @@ def create_recipe(
     seasonality: str,
     servings: int,
     is_quick_fallback: bool = False,
+    is_special_occasion: bool = False,
     instructions: Optional[str] = None,
     notes: Optional[str] = None,
     photo_path: Optional[str] = None,
@@ -95,8 +97,9 @@ def create_recipe(
         """
         INSERT INTO recipes (
             name, photo_path, cook_time_minutes, family_enjoyment,
-            seasonality, is_quick_fallback, servings, instructions, notes
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            seasonality, is_quick_fallback, is_special_occasion, servings,
+            instructions, notes
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -106,6 +109,7 @@ def create_recipe(
             family_enjoyment,
             seasonality,
             int(is_quick_fallback),
+            int(is_special_occasion),
             servings,
             instructions,
             notes,
@@ -124,6 +128,8 @@ def update_recipe(conn: psycopg.Connection, recipe_id: int, **fields) -> None:
         _validate_seasonality(fields["seasonality"])
     if "is_quick_fallback" in fields:
         fields["is_quick_fallback"] = int(fields["is_quick_fallback"])
+    if "is_special_occasion" in fields:
+        fields["is_special_occasion"] = int(fields["is_special_occasion"])
     columns = ", ".join(f"{key} = %s" for key in fields)
     values = list(fields.values()) + [recipe_id]
     conn.execute(
