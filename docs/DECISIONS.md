@@ -963,3 +963,144 @@ produced degrades to the existing graceful message rather than crashing
 service-level tests in `tests/test_ai_assist_service.py` already do)
 would have passed even before bug 2 was ever found, since it never
 exercises the real HTTP-error path at all.
+
+## 2026-09-02 — Deterministic bilingual first pass for categorization and quantity/unit, plus the AI-categorization resilience fix
+
+Two related changes, implemented together: a local, keyword-based first
+pass that runs before any AI call (so most ingredients never need one at
+all), and the fix for the AI fallback's own slowness for whatever's left
+(the `gemini-flash-latest` overload/timeout/rate-limit findings from the
+prior investigation — see the "3+ minutes, every row landed on other"
+report this entry's fix responds to; that investigation wasn't itself
+committed as a DECISIONS.md entry since it ended in "report, don't
+implement yet").
+
+**Categorization: `services/categorization.py`, a new pure module —
+`suggest_category(name)`, bilingual keyword/substring lookup, no network,
+no model.** Wired into `pages/2_Add_Edit_Recipe.py`'s
+`_apply_import_draft()` as the first pass on every imported row (all
+three import paths: URL structured data, AI text fallback, AI photo
+import all flow through this one function); the existing manual "🤖
+Auto-categorize ingredients" button already only touches rows still
+`"other"` (see the categorization-UI entry above), so this shrinks that
+button's own workload for free — no change needed there beyond the
+resilience fix below. Substring matching, not whole-word: Norwegian
+compounds words with no separator (`kyllingfilet`, `gulost`), so a
+`\b`-bounded word match would miss most real Norwegian ingredient lines.
+
+**Two real bugs found by testing against real sample recipes (not
+assumed):**
+1. **Cross-keyword collisions from substring matching itself** — `"garlic,
+   minced"` matched `meat` (the keyword `"mince"` is a substring of
+   `"minced"`), `"1 tsp cornstarch"` matched `produce` (`"corn"` is a
+   substring of `"cornstarch"`), `"3 dl fiskekraft"` (fish stock) matched
+   `meat` (`"fisk"` is a substring). Fixed by scoring every keyword match
+   by length and keeping the *longest*, not the first category checked —
+   `"cornstarch"` (an explicit pantry keyword) and `"fiskekraft"` (added
+   explicitly to pantry) now correctly beat the shorter `"corn"`/`"fisk"`
+   they contain. `"frozen"`/`"frossen"` is checked as a separate,
+   unconditional override *before* that length comparison, not folded
+   into it — it names a store aisle, not an ingredient type, and
+   `"chicken"` (7 chars) being longer than `"frozen"` (6 chars) would
+   otherwise make `"frozen chicken breast"` lose to `meat`, which is
+   backwards for what this category is for.
+2. **A dangerously generic keyword**: Norwegian `"and"` (duck) is also
+   the English conjunction — `"salt and pepper"` matched `meat` before
+   this was caught. Removed in favor of `"andebryst"` (duck breast, the
+   actual common form), same fix-by-specificity as bug 1's collisions.
+
+**Quantity/unit: `split_quantity_unit()` in `services/recipe_import.py`,
+plain regex, wired into `_coerce_ingredients()`.** This **reverses** the
+"Milestone 10 implementation choices" entry above ("`recipeIngredient`
+lines are stored whole, not split into name/quantity/unit... exactly the
+kind of per-site/per-phrasing parsing logic a scraping library would
+bundle") — but narrowly: a leading `quantity[space]unit` prefix
+(`"350g block firm tofu..."`, `"2 ss olivenolje"`) is a generic, regular
+pattern across sites and languages, not the per-site
+DOM-shape/phrasing-heuristic logic that reasoning was actually about, so
+implementing it doesn't take on what that entry deliberately avoided.
+Handles, in one regex: plain integers; dot decimals (`1.5`) and Norwegian
+comma decimals (`1,5`); plain fractions (`1/2`) and mixed numbers (`1
+1/2`); unicode fraction glyphs both bare (`½`) and glued to a leading
+integer (`1½`); and a shared English+Norwegian unit list (`g`/`kg`/`ml`/
+`l` are the same in both; `ss`/`ts`/`dl`/`stk`/`fedd`/`boks` are
+Norwegian-specific, alongside `tbsp`/`tsp`/`cup`/`clove`/`can`/etc.). A
+quantity with no recognized unit word still splits off (`"2 onions"` →
+quantity `2.0`, unit `None`) rather than requiring both — strictly more
+useful than leaving it as one opaque string. Anything that doesn't match
+a leading quantity at all falls back to today's existing behavior
+unchanged: the whole line as `name`, `quantity`/`unit` both `None`.
+
+**Real coverage, measured against 10 sample recipes (5 English, 5
+Norwegian; representative dishes — chicken curry, tomato soup, a tofu
+stir-fry, pancakes, tacos; fiskesuppe, kjøttboller, kyllinggryte,
+pannekaker, laks i ovn — written to be realistic, not fetched from a live
+URL), 73 ingredient lines total:**
+- Categorization: **73/73 (100%)** on this sample set. A separate
+  stress test against less-common ingredients not tuned for in the
+  keyword lists (galangal, kaffir lime leaves, star anise; valnøtter,
+  sitrongress) — deliberately run to check this isn't just circular
+  (the keyword lists and the test recipes were both written by the same
+  pass) — came back **4/7 (57%) English, 5/6 (83%) Norwegian**, which is
+  the honest, representative number for ingredients outside common
+  everyday cooking. The gap is exactly what the AI fallback below exists
+  to cover.
+- Quantity extracted (with or without a recognized unit): **68/73
+  (93.2%)** — 35/37 English, 33/36 Norwegian.
+- Quantity **and** a recognized unit: **52/73 (71.2%)** — 28/37 English,
+  24/36 Norwegian. The gap from the line above is mostly bare-count
+  ingredients with no unit at all ("1 onion", "3 egg") — correctly
+  `unit: None`, not a miss.
+- **Known, accepted gap, not fixed**: canned/tinned ingredients where
+  "canned"-ness is conveyed only by the *unit* (Norwegian `"boks"` =
+  can) and not repeated in the remaining ingredient text —
+  `"1 boks hakkede tomater"` (canned chopped tomatoes) categorizes as
+  `produce` (via `"tomat"`) rather than `pantry`, because
+  `suggest_category()` only ever sees the `name` field, never `unit`.
+  Not worth wiring unit-awareness into the categorizer for this one case
+  — a first pass is allowed to be imperfect; this is exactly what the AI
+  fallback and manual override both exist for.
+
+**AI-categorization resilience (`services/ai_assist.py`,
+`pages/2_Add_Edit_Recipe.py`) — implementing the prior investigation's
+proposed fix now that far fewer calls reach this path at all:**
+1. `suggest_store_category()` now passes a separate, short
+   `_CATEGORY_SUGGESTION_TIMEOUT = 6.0` into `_generate()`, instead of
+   inheriting the full `_GENERATE_TIMEOUT = 30.0` meant for recipe
+   import. This is the direct fix for the investigation's finding: 5 of 6
+   real calls to `gemini-flash-latest` hung to the full 30s timeout, one
+   more took 17s before a 503 "high demand" — a best-effort, skippable
+   suggestion shouldn't cost that.
+2. The bulk "🤖 Auto-categorize ingredients" button
+   (`pages/2_Add_Edit_Recipe.py`) now runs its remaining `"other"` rows'
+   suggestions through a `concurrent.futures.ThreadPoolExecutor(max_workers=4)`
+   instead of one-by-one — these are independent, I/O-bound HTTP calls
+   (the GIL releases during `urlopen`), so a batch's wall time becomes
+   roughly the slowest single call rather than their sum. Row mutation
+   only happens on the main thread, after each future resolves via
+   `as_completed()` — never from inside a worker thread — so this adds no
+   `session_state` thread-safety surface.
+3. `GEMINI_MODEL`'s default changed to `gemini-flash-lite-latest`,
+   which the investigation measured as fast (under 1s) and correct
+   against the real API when `gemini-flash-latest` was hanging/
+   overloaded/rate-limited. Lower priority than 1/2, since Part A already
+   means far fewer calls ever reach this path — but still worth doing.
+   Flagged, same as the `gemini-flash-latest` fix before it: a `-latest`
+   alias is Google's current routing decision, not a permanent
+   guarantee, and this can go stale the same way again.
+
+**Verification:** `pytest` full suite, 3 consecutive runs, **269/269
+passed each time** — confirmed up from a true baseline of **248/248**
+(checked via `git stash -u`, which stashes untracked files too; a first
+attempt without `-u` left the new, untracked
+`tests/test_categorization_service.py` sitting on disk during the
+"baseline" run and silently inflated it — caught and corrected before
+this entry was written, not left as a wrong number). 21 net new tests: 7
+in `tests/test_categorization_service.py`, 12 new `split_quantity_unit`
+cases in `tests/test_recipe_import_service.py`, 2 in
+`tests/test_ai_assist_service.py` for the timeout/model changes (2
+existing `test_recipe_import_service.py` assertions were also updated in
+place to match the new non-`None` quantity/unit output — modified, not
+counted as additions). The coverage numbers above are real measured
+output from a throwaway script run against `services/categorization.py`
+and `services/recipe_import.py` directly, not estimates.

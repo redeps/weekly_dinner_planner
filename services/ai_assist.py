@@ -37,7 +37,12 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = os.environ.get("AI_ASSIST_MODEL", "llama3.2")
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
+# "-latest" alias, not a pinned snapshot, per the photo-import investigation
+# (docs/DECISIONS.md) — gemini-flash-lite-latest measured fast and correct
+# against the real API there, when gemini-flash-latest was timing out/
+# overloaded. Still an alias to whatever Google currently routes it to, so
+# this can go stale again the same way; not a permanent guarantee.
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
 
 _raw_backend = os.environ.get("AI_ASSIST_BACKEND", "ollama").strip().lower()
 AI_ASSIST_BACKEND = _raw_backend if _raw_backend in ("ollama", "gemini") else "ollama"
@@ -45,6 +50,11 @@ AI_ASSIST_BACKEND = _raw_backend if _raw_backend in ("ollama", "gemini") else "o
 _AVAILABILITY_TIMEOUT = 1.5
 _GENERATE_TIMEOUT = 30.0
 _URL_FETCH_TIMEOUT = 10.0
+# Short-lived on purpose: suggest_store_category() is a best-effort,
+# skippable suggestion, not worth a long wait — see docs/DECISIONS.md
+# (the investigation that found gemini-flash-latest hanging up to the
+# full 30s timeout per call, turning a 6-ingredient batch into 3+ minutes).
+_CATEGORY_SUGGESTION_TIMEOUT = 6.0
 
 _IMPORT_JSON_SHAPE = (
     '{"name": string, "servings": integer, "cook_time_minutes": integer, '
@@ -260,7 +270,7 @@ def suggest_store_category(ingredient_name: str, *, model: Optional[str] = None)
         f"categories: {categories}. Respond with ONLY the category word, "
         f"nothing else.\n\nIngredient: {ingredient_name.strip()}"
     )
-    response = _generate(prompt, model=model)
+    response = _generate(prompt, model=model, timeout=_CATEGORY_SUGGESTION_TIMEOUT)
     if response is None:
         return None
     category = response.strip().strip(".").lower()

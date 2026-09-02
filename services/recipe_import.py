@@ -151,21 +151,111 @@ def _coerce_instructions(value) -> Optional[str]:
     return "\n".join(steps) if steps else None
 
 
+_UNICODE_FRACTIONS = {
+    "½": 0.5,
+    "⅓": 1 / 3,
+    "⅔": 2 / 3,
+    "¼": 0.25,
+    "¾": 0.75,
+    "⅕": 0.2,
+    "⅙": 1 / 6,
+    "⅛": 0.125,
+}
+_FRACTION_CHARS = "".join(_UNICODE_FRACTIONS)
+
+# Units checked after a leading quantity — English and Norwegian
+# (ss/ts/dl/stk/fedd/boks/pk/knippe/skive), sharing the metric
+# abbreviations (g/kg/ml/l) that mean the same thing in both languages.
+_UNITS = (
+    "g", "kg", "mg", "oz", "lb", "lbs",
+    "cup", "cups", "tbsp", "tbsps", "tablespoon", "tablespoons",
+    "tsp", "tsps", "teaspoon", "teaspoons",
+    "ml", "l", "liter", "liters", "litre", "litres",
+    "pinch", "clove", "cloves", "can", "cans",
+    "package", "packages", "pkg", "bunch", "bunches",
+    "slice", "slices", "piece", "pieces", "each",
+    "block", "sprig", "sprigs", "head", "heads", "stick", "sticks",
+    "ss", "ts", "dl", "stk", "fedd", "boks", "bokser",
+    "pk", "pakke", "pakker", "knippe", "skive", "skiver",
+    "kopp", "kopper", "teskje", "teskjeer", "spiseskje", "spiseskjeer",
+)
+
+_QUANTITY_UNIT_RE = re.compile(
+    r"^\s*"
+    r"(?P<qty>"
+    rf"\d+\s+\d+/\d+"  # mixed fraction, e.g. "1 1/2"
+    rf"|\d+[{_FRACTION_CHARS}]"  # integer + glued unicode fraction, e.g. "1½"
+    rf"|[{_FRACTION_CHARS}]"  # bare unicode fraction, e.g. "½"
+    r"|\d+/\d+"  # plain fraction, e.g. "1/2"
+    r"|\d+[.,]\d+"  # decimal, dot or Norwegian comma, e.g. "1.5" / "1,5"
+    r"|\d+"  # plain integer
+    r")"
+    r"\s*"
+    r"(?P<unit>" + "|".join(re.escape(u) for u in _UNITS) + r")?\b"
+    r"\s*"
+    r"(?P<rest>.*)$",
+    re.IGNORECASE,
+)
+
+
+def _parse_quantity_token(token: str) -> Optional[float]:
+    """Convert a matched quantity token (see _QUANTITY_UNIT_RE) into a
+    float — handles unicode fractions, mixed numbers, plain fractions,
+    and dot/comma decimals."""
+    token = token.strip()
+    for char, value in _UNICODE_FRACTIONS.items():
+        if char in token:
+            leading = token.replace(char, "").strip()
+            whole = int(leading) if leading else 0
+            return round(whole + value, 4)
+    if " " in token:  # mixed number, e.g. "1 1/2"
+        whole_part, frac_part = token.split(" ", 1)
+        numerator, denominator = frac_part.split("/")
+        return round(int(whole_part) + int(numerator) / int(denominator), 4)
+    if "/" in token:  # plain fraction, e.g. "1/2"
+        numerator, denominator = token.split("/")
+        return round(int(numerator) / int(denominator), 4)
+    return float(token.replace(",", "."))
+
+
+def split_quantity_unit(line: str) -> dict:
+    """Split a leading quantity (and optional unit) off an ingredient
+    line, e.g. "350g block firm tofu, cut into..." ->
+    {"name": "block firm tofu, cut into...", "quantity": 350.0, "unit": "g"},
+    or Norwegian "2 ss olivenolje" -> {"name": "olivenolje", "quantity":
+    2.0, "unit": "ss"}. Falls back to the whole line as name with
+    quantity/unit None when there's no leading quantity to split off —
+    today's existing behavior for anything this doesn't match. Plain
+    regex, no model call (see module docstring)."""
+    text = line.strip()
+    match = _QUANTITY_UNIT_RE.match(text)
+    if not match or not match.group("rest").strip():
+        return {"name": text, "quantity": None, "unit": None}
+    quantity = _parse_quantity_token(match.group("qty"))
+    unit = match.group("unit")
+    return {
+        "name": match.group("rest").strip(),
+        "quantity": quantity,
+        "unit": unit.lower() if unit else None,
+    }
+
+
 def _coerce_ingredients(value) -> list[dict]:
     """recipeIngredient is typically a flat list of free-text lines (e.g.
-    "2 cups flour") — schema.org doesn't split them into name/quantity/
-    unit, and parsing that out reliably needs exactly the kind of
-    scraping-library logic this module deliberately avoids (see
-    docs/DECISIONS.md), so each line becomes one ingredient row with the
-    full text as its name; the user can split it manually afterward if
-    they want grocery-list aggregation to match units."""
+    "2 cups flour"). schema.org doesn't split them into name/quantity/
+    unit itself, but a leading quantity+unit is a generic, regular
+    pattern (not the per-site/per-phrasing logic a scraping library would
+    bundle — see docs/DECISIONS.md on why that's still avoided), so
+    split_quantity_unit() handles the common case; anything it doesn't
+    recognize falls back to the full line as name, same as before this
+    existed."""
     if not isinstance(value, list):
         return []
     ingredients = []
     for line in value:
         text = str(line).strip()
         if text:
-            ingredients.append({"name": text, "quantity": None, "unit": None})
+            ingredients.append(split_quantity_unit(text))
     return ingredients
 
 

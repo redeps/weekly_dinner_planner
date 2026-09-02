@@ -21,11 +21,13 @@ doesn't appear when its backend isn't configured/reachable; the rest of
 this form (including URL import) works identically either way.
 """
 
+import concurrent.futures
+
 import streamlit as st
 
 from database import get_connection
 from models import SEASONALITIES, STORE_CATEGORIES
-from services import ai_assist, photos, recipe_import
+from services import ai_assist, categorization, photos, recipe_import
 from services.auth import require_password
 from services.ingredients import list_ingredients, replace_recipe_ingredients
 from services.recipes import create_recipe, get_recipe, update_recipe
@@ -108,7 +110,7 @@ def _apply_import_draft(draft: dict) -> None:
                 "name": ing["name"],
                 "quantity": "" if ing["quantity"] is None else str(ing["quantity"]),
                 "unit": ing["unit"] or "",
-                "store_category": "other",
+                "store_category": categorization.suggest_category(ing["name"]) or "other",
             }
         )
     st.session_state["ingredient_rows"] = rows
@@ -229,13 +231,30 @@ st.subheader("Ingredients")
 
 if ai_available and st.session_state.get("import_happened"):
     if st.button("🤖 Auto-categorize ingredients"):
-        for row in st.session_state["ingredient_rows"]:
-            if row["store_category"] != "other":
-                continue  # user already picked a category by hand — leave it alone
-            suggestion = ai_assist.suggest_store_category(row["name"])
-            if suggestion:
-                row["store_category"] = suggestion
-                row["_cat_version"] = row.get("_cat_version", 0) + 1
+        # Deterministic categorization (services/categorization.py) already
+        # ran on import, so only rows it couldn't place — still "other" —
+        # reach here. Suggestions run concurrently, not one-by-one: each is
+        # an independent, short-timeout HTTP call (see
+        # ai_assist._CATEGORY_SUGGESTION_TIMEOUT), so a batch's wall time is
+        # bounded by the slowest single call instead of their sum — see
+        # docs/DECISIONS.md for the investigation this addresses. Rows are
+        # only mutated here, back on the main thread, after each future
+        # resolves — never from inside a worker thread.
+        rows_to_suggest = [
+            row for row in st.session_state["ingredient_rows"] if row["store_category"] == "other"
+        ]
+        if rows_to_suggest:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                future_to_row = {
+                    executor.submit(ai_assist.suggest_store_category, row["name"]): row
+                    for row in rows_to_suggest
+                }
+                for future in concurrent.futures.as_completed(future_to_row):
+                    row = future_to_row[future]
+                    suggestion = future.result()
+                    if suggestion:
+                        row["store_category"] = suggestion
+                        row["_cat_version"] = row.get("_cat_version", 0) + 1
         st.rerun()
 
 for row in st.session_state["ingredient_rows"]:

@@ -122,9 +122,9 @@ def test_recipe_draft_from_simple_json_ld():
         "Add the tomatoes and simmer for 20 minutes."
     )
     assert draft["ingredients"] == [
-        {"name": "2 cups chopped tomatoes", "quantity": None, "unit": None},
-        {"name": "1 onion, diced", "quantity": None, "unit": None},
-        {"name": "1 tbsp olive oil", "quantity": None, "unit": None},
+        {"name": "chopped tomatoes", "quantity": 2.0, "unit": "cups"},
+        {"name": "onion, diced", "quantity": 1.0, "unit": None},
+        {"name": "olive oil", "quantity": 1.0, "unit": "tbsp"},
     ]
 
 
@@ -144,8 +144,8 @@ def test_recipe_draft_from_graph_json_ld_with_howto_steps():
         "Add the coconut milk and simmer."
     )
     assert draft["ingredients"] == [
-        {"name": "500g chicken thighs", "quantity": None, "unit": None},
-        {"name": "1 can coconut milk", "quantity": None, "unit": None},
+        {"name": "chicken thighs", "quantity": 500.0, "unit": "g"},
+        {"name": "coconut milk", "quantity": 1.0, "unit": "can"},
     ]
 
 
@@ -223,3 +223,128 @@ def test_parse_recipe_url_returns_none_when_no_structured_data():
 def test_fetch_html_returns_none_on_connection_error():
     with patch("urllib.request.urlopen", side_effect=OSError("connection refused")):
         assert recipe_import.fetch_html("https://example.com/anything") is None
+
+
+# --- split_quantity_unit: bilingual quantity/unit extraction, no model call ---
+
+
+def test_split_quantity_unit_glued_grams():
+    assert recipe_import.split_quantity_unit("350g block firm tofu, cut into cubes") == {
+        "name": "block firm tofu, cut into cubes",
+        "quantity": 350.0,
+        "unit": "g",
+    }
+
+
+def test_split_quantity_unit_spaced_unit():
+    assert recipe_import.split_quantity_unit("2 tbsp olive oil") == {
+        "name": "olive oil",
+        "quantity": 2.0,
+        "unit": "tbsp",
+    }
+
+
+def test_split_quantity_unit_plain_fraction():
+    assert recipe_import.split_quantity_unit("1/2 cup heavy cream") == {
+        "name": "heavy cream",
+        "quantity": 0.5,
+        "unit": "cup",
+    }
+
+
+def test_split_quantity_unit_mixed_number_fraction():
+    assert recipe_import.split_quantity_unit("1 1/2 cups all-purpose flour") == {
+        "name": "all-purpose flour",
+        "quantity": 1.5,
+        "unit": "cups",
+    }
+
+
+def test_split_quantity_unit_unicode_fraction_bare():
+    assert recipe_import.split_quantity_unit("½ cup sugar") == {
+        "name": "sugar",
+        "quantity": 0.5,
+        "unit": "cup",
+    }
+
+
+def test_split_quantity_unit_unicode_fraction_glued_to_integer():
+    assert recipe_import.split_quantity_unit("1½ cups milk") == {
+        "name": "milk",
+        "quantity": 1.5,
+        "unit": "cups",
+    }
+
+
+def test_split_quantity_unit_decimal_dot():
+    assert recipe_import.split_quantity_unit("1.5 cups flour") == {
+        "name": "flour",
+        "quantity": 1.5,
+        "unit": "cups",
+    }
+
+
+def test_split_quantity_unit_norwegian_comma_decimal():
+    assert recipe_import.split_quantity_unit("1,5 dl vann") == {
+        "name": "vann",
+        "quantity": 1.5,
+        "unit": "dl",
+    }
+
+
+def test_split_quantity_unit_norwegian_abbreviations():
+    assert recipe_import.split_quantity_unit("2 ss olivenolje") == {
+        "name": "olivenolje",
+        "quantity": 2.0,
+        "unit": "ss",
+    }
+    assert recipe_import.split_quantity_unit("1 ts salt") == {
+        "name": "salt",
+        "quantity": 1.0,
+        "unit": "ts",
+    }
+    assert recipe_import.split_quantity_unit("4 stk laksefileter") == {
+        "name": "laksefileter",
+        "quantity": 4.0,
+        "unit": "stk",
+    }
+    assert recipe_import.split_quantity_unit("2 fedd hvitløk") == {
+        "name": "hvitløk",
+        "quantity": 2.0,
+        "unit": "fedd",
+    }
+
+
+def test_split_quantity_unit_quantity_without_recognized_unit():
+    """A leading number with no unit word still splits off the quantity —
+    "2 onions" is strictly more useful than leaving it all as name, even
+    though there's no unit to extract."""
+    assert recipe_import.split_quantity_unit("2 onions") == {
+        "name": "onions",
+        "quantity": 2.0,
+        "unit": None,
+    }
+
+
+def test_split_quantity_unit_falls_back_when_no_leading_quantity():
+    assert recipe_import.split_quantity_unit("salt to taste") == {
+        "name": "salt to taste",
+        "quantity": None,
+        "unit": None,
+    }
+    assert recipe_import.split_quantity_unit("frisk persille") == {
+        "name": "frisk persille",
+        "quantity": None,
+        "unit": None,
+    }
+
+
+def test_split_quantity_unit_falls_back_when_quantity_is_the_whole_line():
+    """A bare number with nothing after it has no name to extract —
+    falls back to treating the whole (numeric) line as the name, same as
+    the no-match case, rather than producing an empty name."""
+    assert recipe_import.split_quantity_unit("2") == {
+        "name": "2",
+        "quantity": None,
+        "unit": None,
+    }

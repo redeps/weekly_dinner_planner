@@ -174,6 +174,23 @@ def test_suggest_store_category_returns_none_for_blank_name():
     assert ai_assist.suggest_store_category("   ") is None
 
 
+def test_suggest_store_category_uses_short_timeout_not_the_import_timeout():
+    """A best-effort suggestion shouldn't wait as long as recipe import —
+    see docs/DECISIONS.md (the investigation where gemini-flash-latest
+    hung up to the full 30s _GENERATE_TIMEOUT per call)."""
+    with patch.object(ai_assist, "_generate", return_value="produce") as mock_generate:
+        ai_assist.suggest_store_category("onion")
+    assert mock_generate.call_args.kwargs["timeout"] == ai_assist._CATEGORY_SUGGESTION_TIMEOUT
+    assert ai_assist._CATEGORY_SUGGESTION_TIMEOUT < ai_assist._GENERATE_TIMEOUT
+
+
+def test_gemini_model_default_is_not_the_confirmed_dead_snapshot():
+    """gemini-2.0-flash and gemini-2.5-flash both 404 against the real API
+    (see docs/DECISIONS.md) — this just guards against silently
+    reverting to either."""
+    assert ai_assist.GEMINI_MODEL not in ("gemini-2.0-flash", "gemini-2.5-flash")
+
+
 # --- narrow_candidates_by_intent ---
 
 
