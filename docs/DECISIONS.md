@@ -1380,3 +1380,70 @@ corpus itself contained no abbreviation-collision risks at all (confirmed
 by scanning it directly) — the guard exists for recipes imported in the
 future, which this app's primary growth path (URL/photo import) will
 keep adding.
+
+## 2026-09-02 — Busy-day preference strengthened toward quick-fallback recipes
+
+Milestone 4's busy-day scoring (recorded above) weights toward lower
+`cook_time_minutes` generally, "including but not exclusive to"
+`is_quick_fallback` recipes — but measured against the real dev DB (11
+recipes, 3 flagged quick-fallback), a busy day landed on a quick-fallback
+recipe only 65.8% of the time under that formula; the other ~34% it fell
+through to a 25-60 min recipe. Requested: push this much stronger, so a
+busy day "essentially always" lands on quick-fallback, while still
+falling back to a non-repeating low-cook-time option when a week has more
+busy days than distinct quick-fallback recipes exist to cover them.
+
+**New constant, stacked on top of the existing cook-time weighting rather
+than replacing it:** `BUSY_DAY_QUICK_FALLBACK_BONUS = 7.5`, multiplied
+into `score_recipe`'s weight only when `is_busy` and
+`recipe.is_quick_fallback` are both true, on top of the pre-existing
+`BUSY_DAY_QUICK_WEIGHT`/`BUSY_DAY_SLOW_WEIGHT` branch. Stacking (rather
+than a standalone `is_quick_fallback` branch that would replace the
+cook-time check) keeps the "not exclusive to quick-fallback" behavior
+intact — an unflagged recipe with a genuinely low cook time still gets a
+boost on a busy day, just a smaller one.
+
+**7.5 was chosen over the other two values tested (5.0 and 10.0),
+measured against the real recipe set:**
+
+| bonus | effective multiplier for a flagged recipe | measured P(any quick-fallback chosen on a busy day) |
+|---|---|---|
+| 5.0 | 10x | 90.6% |
+| **7.5** | **15x** | **93.5%** |
+| 10.0 | 20x | 95.1% |
+
+10.0 measured highest, but was rejected as unnecessarily aggressive for a
+first tuning pass — 7.5 (93.5%) already satisfies "essentially always"
+while leaving more real headroom for the rotation-avoidance and
+seasonality/enjoyment tie-breaking factors to still matter day-to-day
+(confirmed directly: with 7.5, a quick-fallback recipe cooked 2 days
+earlier drops from the most-favored pick to well behind the other two
+still-eligible quick-fallback recipes, i.e. rotation avoidance still
+functions under the new weight, not swamped by it). 10.0 remains an easy
+follow-up bump if 93.5% turns out not to be "essentially always" enough
+in practice.
+
+**Confirmed with the real dev-DB recipe set (11 recipes, 3 flagged
+quick-fallback) that the "not enough distinct quick-fallback recipes"
+scenario degrades correctly, not into a repeat or an unfilled day:**
+simulated a week with 4 busy days against only 3 quick-fallback recipes,
+2,000 trials — no repeat ever occurred and every day was always filled.
+On the 4th busy day (quick-fallback pool almost always already exhausted
+by then), the generator correctly fell through to a non-quick-fallback
+recipe.
+
+**Deferred, not forgotten — a real gap found while testing this, not
+introduced by this change:** among the non-quick-fallback fallback picks
+in that same simulation, the choice was nearly uniform across cook times
+25-60 min (10-12% each) — a 25-minute recipe and a 60-minute recipe were
+equally likely once past the existing `BUSY_DAY_QUICK_THRESHOLD_MINUTES`
+(20 min) cutoff, because `BUSY_DAY_SLOW_WEIGHT` is a single flat
+multiplier for everything above that threshold, with no further gradient
+by actual cook time. This pre-dates this change (it's a property of the
+Milestone 4 formula) and only becomes visible in the specific scenario
+this request asked about — more busy days than quick-fallback recipes.
+Explicitly **not addressed in this change**: the request was to
+strengthen the quick-fallback preference and confirm graceful fallback,
+not to redesign the cook-time gradient above the busy-day threshold.
+Revisit if households actually hit this scenario often enough for the
+flat 25-vs-60-min tie to matter in practice.

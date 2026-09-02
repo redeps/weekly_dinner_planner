@@ -36,6 +36,7 @@ ROTATION_PENALTY_WEIGHT = 0.2
 BUSY_DAY_QUICK_WEIGHT = 2.0
 BUSY_DAY_SLOW_WEIGHT = 0.4
 BUSY_DAY_QUICK_THRESHOLD_MINUTES = 20
+BUSY_DAY_QUICK_FALLBACK_BONUS = 7.5  # see docs/DECISIONS.md
 ENJOYMENT_WEIGHT_PER_STAR = 0.1
 
 
@@ -80,6 +81,8 @@ def score_recipe(
             weight *= BUSY_DAY_QUICK_WEIGHT
         else:
             weight *= BUSY_DAY_SLOW_WEIGHT
+        if recipe.is_quick_fallback:
+            weight *= BUSY_DAY_QUICK_FALLBACK_BONUS
 
     weight *= 1 + (recipe.family_enjoyment * ENJOYMENT_WEIGHT_PER_STAR)
 

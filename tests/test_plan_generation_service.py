@@ -167,6 +167,65 @@ def test_score_recipe_cook_time_irrelevant_on_non_busy_day(conn):
     )
 
 
+# --- score_recipe: quick-fallback bonus on busy days ---
+
+
+def test_score_recipe_boosts_quick_fallback_beyond_plain_quick_recipe_on_busy_day(conn):
+    """Both recipes are already <= BUSY_DAY_QUICK_THRESHOLD_MINUTES, so
+    both get BUSY_DAY_QUICK_WEIGHT — is_quick_fallback must add a further,
+    stacked boost on top of that, not just match it."""
+    today = dt.date(2026, 8, 31)
+    quick_fallback = make_recipe(conn, cook_time_minutes=15, is_quick_fallback=True)
+    plain_quick = make_recipe(conn, cook_time_minutes=15, is_quick_fallback=False)
+    kwargs = dict(season="all-season", is_busy=True, last_cooked=None, today=today)
+    assert plan_service.score_recipe(
+        quick_fallback, **kwargs
+    ) > plan_service.score_recipe(plain_quick, **kwargs)
+
+
+def test_score_recipe_quick_fallback_bonus_not_applied_on_non_busy_day(conn):
+    today = dt.date(2026, 8, 31)
+    quick_fallback = make_recipe(conn, cook_time_minutes=15, is_quick_fallback=True)
+    plain = make_recipe(conn, cook_time_minutes=15, is_quick_fallback=False)
+    kwargs = dict(season="all-season", is_busy=False, last_cooked=None, today=today)
+    assert plan_service.score_recipe(
+        quick_fallback, **kwargs
+    ) == plan_service.score_recipe(plain, **kwargs)
+
+
+def test_rotation_penalty_still_measurably_affects_quick_fallback_selection(conn):
+    """Confirms the new BUSY_DAY_QUICK_FALLBACK_BONUS doesn't swamp rotation
+    avoidance: a quick-fallback recipe cooked recently must still be
+    measurably less likely to be picked than one that wasn't, on a busy
+    day, matching the real Takeout-cooked-2-days-ago finding from the
+    investigation (see docs/DECISIONS.md)."""
+    today = dt.date(2026, 8, 31)
+    recently_cooked = make_recipe(
+        conn, name="Recently Cooked Fallback", cook_time_minutes=0, is_quick_fallback=True
+    )
+    fresh = make_recipe(
+        conn, name="Fresh Fallback", cook_time_minutes=15, is_quick_fallback=True
+    )
+    rng = random.Random(0)
+    picks = [
+        plan_service.choose_recipe(
+            [recently_cooked, fresh],
+            season="all-season",
+            is_busy=True,
+            last_cooked_by_recipe={recently_cooked.id: today - dt.timedelta(days=2)},
+            today=today,
+            rng=rng,
+        )
+        for _ in range(500)
+    ]
+    recently_cooked_count = sum(1 for p in picks if p.id == recently_cooked.id)
+    fresh_count = sum(1 for p in picks if p.id == fresh.id)
+    assert fresh_count > recently_cooked_count, (
+        "rotation avoidance must still measurably favor the not-recently-"
+        "cooked quick-fallback recipe, even under the new busy-day bonus"
+    )
+
+
 # --- score_recipe: enjoyment tie-breaker ---
 
 
@@ -289,6 +348,32 @@ def test_generate_week_plan_avoids_repeats_when_enough_recipes(conn):
     )
     days = plan_service.list_plan_days(conn, week_plan_id)
     assert len({d.recipe_id for d in days}) == 7
+
+
+def test_generate_week_plan_falls_back_without_repeats_when_busy_days_exceed_quick_fallback_recipes(
+    conn,
+):
+    """More busy days (4) than distinct quick-fallback recipes (3) - the
+    scenario flagged in docs/DECISIONS.md as the reason for testing this
+    explicitly, not just relying on the 2,000-trial simulation from the
+    investigation. The generator must still avoid repeats and fill every
+    day, falling back to a non-quick-fallback recipe for the day(s) past
+    the quick-fallback supply rather than forcing a repeat or leaving a
+    day unfilled."""
+    for i in range(3):
+        make_recipe(conn, name=f"Quick Fallback {i}", cook_time_minutes=15, is_quick_fallback=True)
+    for i in range(8):
+        make_recipe(conn, name=f"Regular Recipe {i}", cook_time_minutes=45, is_quick_fallback=False)
+
+    calendar = default_calendar(busy_days={"monday", "wednesday", "friday", "saturday"})
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(1)
+    )
+    days = plan_service.list_plan_days(conn, week_plan_id)
+
+    assert len(days) == 7
+    assert all(d.recipe_id is not None for d in days)
+    assert len({d.recipe_id for d in days}) == 7, "no repeat within the week, despite 4 busy days"
 
 
 def test_generate_week_plan_allows_repeats_when_recipe_pool_too_small(conn):
