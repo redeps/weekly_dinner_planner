@@ -10,11 +10,13 @@ never touches the real `public` schema.
 import io
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
 import database
+from services import ai_assist
 from services.recipes import create_recipe, get_recipe
 
 REPO = Path(__file__).parent.parent
@@ -202,3 +204,28 @@ def test_backup_download_contains_valid_data(recipe_id):
         recipes_csv = zf.read("recipes.csv").decode()
 
     assert "Deactivate Me" in recipes_csv
+
+
+# --- Home page surfaces ai_assist.backend_status_note() ---
+
+
+def test_home_page_shows_backend_status_note_when_misconfigured(isolated_db):
+    with patch.object(
+        ai_assist, "backend_status_note", return_value="GEMINI_API_KEY is set but ..."
+    ):
+        at = AppTest.from_file(HOME_PAGE)
+        at.session_state["authenticated"] = True
+        at = at.run()
+
+    assert not at.exception
+    assert any("GEMINI_API_KEY is set" in c.value for c in at.caption)
+
+
+def test_home_page_shows_no_backend_status_note_when_fine(isolated_db):
+    with patch.object(ai_assist, "backend_status_note", return_value=None):
+        at = AppTest.from_file(HOME_PAGE)
+        at.session_state["authenticated"] = True
+        at = at.run()
+
+    assert not at.exception
+    assert not any("AI_ASSIST_BACKEND" in c.value for c in at.caption)

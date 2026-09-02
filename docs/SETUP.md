@@ -267,17 +267,31 @@ gate instead of Streamlit's private-app mechanism. The repo is still
 private and nothing is deployed yet; both happen only once Phase 3 is
 actually underway. When it is, the deployed app's secrets (set via that
 app's **Settings → Secrets**, same TOML format as above, never committed)
-will need: `HOUSEHOLD_PASSWORD`, `GEMINI_API_KEY`, a `[postgres]` section
-with the **production Neon** DSN (not the local one above), and an `[r2]`
-section with the real R2 credentials.
+will need: `HOUSEHOLD_PASSWORD`, `GEMINI_API_KEY`, **`AI_ASSIST_BACKEND =
+"gemini"`**, a `[postgres]` section with the **production Neon** DSN (not
+the local one above), and an `[r2]` section with the real R2 credentials.
 
-This is the one place all four secrets converge into a single box, so
-the exact shape matters — the two root-level keys **must** go before
+`AI_ASSIST_BACKEND` is listed as optional in step 10 above, but that's a
+local-dev framing where Ollama can actually run alongside the app. A
+hosted deployment has no local model server at all, and
+`AI_ASSIST_BACKEND` defaults to `"ollama"` — by design, it is **never**
+switched automatically just because `GEMINI_API_KEY` happens to be set
+(see docs/DECISIONS.md, Milestone 10: explicit configuration, never
+automatic fallback). Skip this line and every text-only AI Assist feature
+(ingredient categorization, swap-intent, shortcuts) silently fails to
+appear — `is_available()` returns `False` because it's still checking for
+an unreachable Ollama server, not because anything is actually broken.
+So for any hosted deployment, this line is effectively **required**, not
+optional, for those features to work at all.
+
+This is the one place all five secrets converge into a single box, so
+the exact shape matters — the three root-level keys **must** go before
 either `[section]` header, same rule as step 11:
 
 ```toml
 HOUSEHOLD_PASSWORD = "choose-a-real-passphrase-here"
 GEMINI_API_KEY = "AIza..."
+AI_ASSIST_BACKEND = "gemini"
 
 [postgres]
 dsn = "postgresql://<user>:<password>@<neon-host>/<db>?sslmode=require"

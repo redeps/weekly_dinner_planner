@@ -65,6 +65,26 @@ def is_available() -> bool:
     return _ollama_reachable(OLLAMA_HOST)
 
 
+def backend_status_note() -> Optional[str]:
+    """One-line diagnostic for a specific, easy-to-hit misconfiguration:
+    a Gemini key is present but AI_ASSIST_BACKEND is still "ollama" (the
+    default — see Milestone 10: backend selection is explicit config,
+    never automatic fallback) and no Ollama server is reachable. In that
+    case every text-only AI Assist feature (categorization, swap-intent,
+    shortcuts, the text-import fallback) just doesn't render — is_available()
+    alone gives no hint why, which is exactly the failure mode that bit a
+    real hosted deployment (GEMINI_API_KEY set, AI_ASSIST_BACKEND never
+    set). Returns None when nothing looks off. Never raises."""
+    if AI_ASSIST_BACKEND == "ollama" and GEMINI_API_KEY and not _ollama_reachable(OLLAMA_HOST):
+        return (
+            "GEMINI_API_KEY is set, but AI_ASSIST_BACKEND is still \"ollama\" "
+            "(the default) and no Ollama server is reachable — text-based AI "
+            "Assist features (categorization, swap-intent, shortcuts) are "
+            "disabled. Set AI_ASSIST_BACKEND=gemini to use Gemini for those too."
+        )
+    return None
+
+
 def _ollama_reachable(host: str, *, timeout: float = _AVAILABILITY_TIMEOUT) -> bool:
     try:
         request = urllib.request.Request(f"{host}/api/tags")

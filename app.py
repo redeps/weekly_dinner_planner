@@ -12,6 +12,7 @@ import datetime as dt
 import streamlit as st
 
 from database import export_database_bytes, get_connection
+from services import ai_assist
 from services.auth import require_password
 from services.recipes import seed_quick_fallback_recipes
 
@@ -22,6 +23,10 @@ require_password()
 def main() -> None:
     st.title("🍽️ Meal Planner")
     st.caption("Milestone 12 — Polish")
+
+    backend_note = ai_assist.backend_status_note()
+    if backend_note:
+        st.caption(f"⚠️ {backend_note}")
 
     try:
         conn = get_connection()

@@ -295,6 +295,43 @@ def test_ai_assist_backend_normalizes_unknown_value_to_ollama():
     assert normalized == "ollama"
 
 
+# --- backend_status_note(): diagnosing the "Gemini key set but backend
+# still ollama" footgun that silently disabled every text-only AI Assist
+# feature on a real hosted deployment ---
+
+
+def test_backend_status_note_flags_gemini_key_stuck_on_unreachable_ollama():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "ollama"), patch.object(
+        ai_assist, "GEMINI_API_KEY", "fake-key"
+    ), patch.object(ai_assist, "_ollama_reachable", return_value=False):
+        note = ai_assist.backend_status_note()
+    assert note is not None
+    assert "AI_ASSIST_BACKEND" in note
+    assert "gemini" in note.lower()
+
+
+def test_backend_status_note_none_without_a_gemini_key():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "ollama"), patch.object(
+        ai_assist, "GEMINI_API_KEY", None
+    ), patch.object(ai_assist, "_ollama_reachable", return_value=False):
+        assert ai_assist.backend_status_note() is None
+
+
+def test_backend_status_note_none_when_ollama_is_actually_reachable():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "ollama"), patch.object(
+        ai_assist, "GEMINI_API_KEY", "fake-key"
+    ), patch.object(ai_assist, "_ollama_reachable", return_value=True):
+        assert ai_assist.backend_status_note() is None
+
+
+def test_backend_status_note_none_when_backend_already_gemini():
+    with patch.object(ai_assist, "AI_ASSIST_BACKEND", "gemini"), patch.object(
+        ai_assist, "GEMINI_API_KEY", "fake-key"
+    ), patch.object(ai_assist, "_ollama_reachable") as mock_reachable:
+        assert ai_assist.backend_status_note() is None
+        mock_reachable.assert_not_called()
+
+
 # --- backend selection: _generate() dispatch ---
 
 
