@@ -1327,3 +1327,56 @@ deployed app itself, so those four are pinned exactly.
 file resolved cleanly with no conflicts (`Requirement already satisfied`
 for every package, at exactly the pinned versions). `pytest` full suite,
 3 consecutive runs, **298/298 passed each time**.
+
+## 2026-09-02 — Cook Mode secondary split: sentence-packing above a 180-char proxy threshold
+
+Investigated the reported step-density problem before changing anything:
+sampled the 11 real recipes in the dev DB (51 newline-derived "steps"
+total) and found 57% of them were multi-sentence paragraphs (up to 471
+chars / 91 words), confirming the complaint was real, not anecdotal.
+
+**`services/cook_mode.py` now further splits a newline-derived step at
+sentence boundaries when it exceeds `SPLIT_THRESHOLD_CHARS` (180),
+purely at render time** — `recipes.instructions` and the newline-splitting
+itself (Milestone 7, recorded above) are unchanged; this only adds a
+second pass over each already-split line. Sentences are greedily packed
+back together up to the 180-char limit rather than shown one-per-screen,
+since individual sentences in the sampled data average only ~88 chars —
+one-sentence-per-screen would have produced a lot of near-empty screens.
+A step that's one long sentence with no sentence boundary at all (no
+`.`/`!`/`?` followed by a capital letter or `(`) is left unsplit rather
+than chopped mid-sentence.
+
+**The 180-char threshold is an estimated proxy, not a measured value —
+worth revisiting once there's real usage to check it against.** No
+headless browser was available in the environment this was investigated
+in to literally screenshot Cook Mode against a mobile viewport, and the
+app has no custom CSS anywhere (confirmed by `grep`) — Cook Mode renders
+steps via plain `st.markdown("# ...")`, so the estimate leans on
+Streamlit's documented default H1 styling (~2.25rem/36px, ~1.2 line
+height) rather than a value extracted from this app's actual rendered
+output. At that size, a ~340px-wide mobile content area (a common phone
+viewport width minus Streamlit's default padding) fits roughly 15-18
+characters per line; accounting for the recipe-name caption, optional
+photo thumbnail, "Step X of Y" caption, and the Back/Next button row all
+sharing the same screen, an estimated 6-8 lines realistically fit above
+the fold — roughly 100-170 characters. 180 was picked just above that
+range, and also happens to land close to this dataset's own real
+single-sentence step median (~88 chars for an individual sentence),
+comfortably fitting one or two related sentences per screen. If real
+usage on an actual phone shows steps still don't fit (or fit with room
+to spare), this number should move — it was never derived from an actual
+measurement of the rendered page.
+
+**Sentence-boundary guard is a small hardcoded abbreviation list, not a
+real sentence-boundary detector** — deliberately, matching this
+project's stdlib-only, small-footprint pattern used elsewhere (e.g. the
+URL-import parser). A split is undone when the token right before the
+period is a known short recipe-instruction abbreviation (`tbsp`, `tsp`,
+`min`, `approx`, `e.g`, `dr`, etc.), verified against synthetic cases
+(`"Add 2 tbsp. Butter..."` stays one sentence; `"Dr. Smith's recipe..."`
+splits after the right sentence, not after "Dr."). The real 11-recipe
+corpus itself contained no abbreviation-collision risks at all (confirmed
+by scanning it directly) — the guard exists for recipes imported in the
+future, which this app's primary growth path (URL/photo import) will
+keep adding.
