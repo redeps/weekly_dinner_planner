@@ -117,4 +117,70 @@ def test_extract_from_photo_degrades_gracefully_on_404_from_model_endpoint(isola
 
     assert not at.exception
     errors = [e.value for e in at.error]
-    assert any("Couldn't extract a recipe from that photo" in e for e in errors), errors
+    assert any("Couldn't extract a recipe from that" in e for e in errors), errors
+
+
+# --- Extract from Photo: multi-photo cap ---
+
+
+def test_more_than_three_photos_shows_cap_error_and_hides_extract_button(isolated_db):
+    """Uploading more than MAX_IMPORT_PHOTOS (3) shows an error instead of
+    silently truncating or processing all of them — this is meant for a
+    handful of photos of one recipe (e.g. front/back of a card), not bulk
+    import."""
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"):
+        at = _load_add_recipe_page()
+        uploader = at.file_uploader(key="ai_import_photo")
+        for i in range(4):
+            uploader.upload(f"page{i}.jpg", b"fake jpeg bytes", "image/jpeg")
+        at = at.run()
+        assert not at.exception
+
+    errors = [e.value for e in at.error]
+    assert any("at most 3 photos" in e for e in errors), errors
+    assert [b for b in at.button if b.label == "Extract from Photo"] == []
+
+
+def test_three_photos_is_within_the_cap(isolated_db):
+    """Exactly MAX_IMPORT_PHOTOS (3) is allowed — the cap error is
+    specifically ">3", not ">=3"."""
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"):
+        at = _load_add_recipe_page()
+        uploader = at.file_uploader(key="ai_import_photo")
+        for i in range(3):
+            uploader.upload(f"page{i}.jpg", b"fake jpeg bytes", "image/jpeg")
+        at = at.run()
+        assert not at.exception
+
+    errors = [e.value for e in at.error]
+    assert not any("at most 3 photos" in e for e in errors), errors
+    assert [b for b in at.button if b.label == "Extract from Photo"] != []
+
+
+def test_extract_from_photo_combines_multiple_uploaded_photos(isolated_db):
+    """All uploaded photos reach import_recipe_from_photos() as one call,
+    not one call per photo — driven through the real widget, not a direct
+    function call."""
+    fake_response = (
+        '{"name": "Combined Recipe", "servings": 4, "cook_time_minutes": 20, '
+        '"instructions": "Do it.", "ingredients": []}'
+    )
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"), patch.object(
+        ai_assist, "_call_gemini", return_value=fake_response
+    ) as mock_gemini:
+        at = _load_add_recipe_page()
+        uploader = at.file_uploader(key="ai_import_photo")
+        uploader.upload("front.jpg", b"front bytes", "image/jpeg")
+        uploader.upload("back.jpg", b"back bytes", "image/jpeg")
+        at = at.run()
+        assert not at.exception
+
+        at = [b for b in at.button if b.label == "Extract from Photo"][0].click().run()
+
+    assert not at.exception
+    mock_gemini.assert_called_once()
+    parts = mock_gemini.call_args.args[0]
+    inline_parts = [p for p in parts if "inline_data" in p]
+    assert len(inline_parts) == 2
+    successes = [s.value for s in at.success]
+    assert any("Combined Recipe" in s for s in successes), successes

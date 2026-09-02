@@ -152,7 +152,10 @@ if not existing:
                 # session_state before this point in the script runs, even
                 # though st.file_uploader(key="ai_import_photo") is
                 # declared further down, so this check works here.
-                if st.session_state.get("ai_import_photo") is not None:
+                # accept_multiple_files=True means "nothing uploaded" is
+                # [], not None — a truthy check covers both that and the
+                # not-yet-rendered case, where .get() returns None.
+                if st.session_state.get("ai_import_photo"):
                     st.error(
                         "That photo won't be used by this button — click "
                         "'Extract from Photo' below it instead, or paste a "
@@ -167,22 +170,30 @@ if not existing:
                 )
 
         if ai_assist.is_photo_import_available():
+            MAX_IMPORT_PHOTOS = 3
             photo = st.file_uploader(
-                "📋 Or upload a photo to auto-fill this form (AI)",
+                "📋 Or upload up to 3 photos to auto-fill this form (AI)",
                 type=["jpg", "jpeg", "png"],
+                accept_multiple_files=True,
                 key="ai_import_photo",
             )
             st.caption(
                 "Used once to pre-fill the fields below, then discarded — "
-                "not saved as the recipe's photo."
+                "not saved as the recipe's photo. Upload more than one "
+                "(e.g. the front and back of a recipe card) to combine "
+                "them into a single draft."
             )
-            if photo is not None and st.button("Extract from Photo"):
-                draft = ai_assist.import_recipe_from_photo(photo.getvalue(), mime_type=photo.type)
+            if len(photo) > MAX_IMPORT_PHOTOS:
+                st.error(f"Please upload at most {MAX_IMPORT_PHOTOS} photos at a time.")
+            elif photo and st.button("Extract from Photo"):
+                draft = ai_assist.import_recipe_from_photos(
+                    [(f.getvalue(), f.type) for f in photo]
+                )
                 if draft:
                     _apply_import_draft(draft)
                 else:
                     st.error(
-                        "Couldn't extract a recipe from that photo — try a clearer "
+                        "Couldn't extract a recipe from that — try a clearer "
                         "image, or fill in the form manually below."
                     )
 

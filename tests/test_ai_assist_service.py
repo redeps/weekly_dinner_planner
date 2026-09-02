@@ -502,6 +502,83 @@ def test_import_recipe_from_photo_ignores_ai_assist_backend_setting():
     mock_ollama.assert_not_called()
 
 
+# --- import_recipe_from_photos: multi-image import (front/back of a card) ---
+
+
+def test_import_recipe_from_photos_sends_all_images_in_one_call():
+    """Multiple photos go into ONE Gemini call as separate inline_data
+    parts, not one call per photo — confirmed against the real API to
+    work this way (see docs/DECISIONS.md); avoids reconciling multiple
+    independently-generated drafts that might disagree."""
+    fake_response = '{"name": "Two-Sided Card Recipe", "servings": 4, "cook_time_minutes": 20, "instructions": "Do it.", "ingredients": []}'
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"), patch.object(
+        ai_assist, "_call_gemini", return_value=fake_response
+    ) as mock_gemini:
+        draft = ai_assist.import_recipe_from_photos(
+            [(b"front bytes", "image/jpeg"), (b"back bytes", "image/png")]
+        )
+    assert draft["name"] == "Two-Sided Card Recipe"
+    mock_gemini.assert_called_once()
+    call_args = mock_gemini.call_args
+    parts = call_args.args[0] if call_args.args else call_args.kwargs["parts"]
+    inline_parts = [p for p in parts if "inline_data" in p]
+    assert len(inline_parts) == 2
+    assert inline_parts[0]["inline_data"]["mime_type"] == "image/jpeg"
+    assert inline_parts[1]["inline_data"]["mime_type"] == "image/png"
+
+
+def test_import_recipe_from_photos_single_image_matches_wrapper():
+    """import_recipe_from_photo() is a thin wrapper — a single-item list
+    through import_recipe_from_photos() must behave identically."""
+    fake_response = '{"name": "One Photo Recipe", "servings": 2, "cook_time_minutes": 10, "instructions": "Do it.", "ingredients": []}'
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"), patch.object(
+        ai_assist, "_call_gemini", return_value=fake_response
+    ):
+        via_plural = ai_assist.import_recipe_from_photos([(b"bytes", "image/jpeg")])
+        via_singular = ai_assist.import_recipe_from_photo(b"bytes", mime_type="image/jpeg")
+    assert via_plural == via_singular == {
+        "name": "One Photo Recipe",
+        "servings": 2,
+        "cook_time_minutes": 10,
+        "instructions": "Do it.",
+        "ingredients": [],
+    }
+
+
+def test_import_recipe_from_photos_returns_none_for_empty_list():
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"):
+        assert ai_assist.import_recipe_from_photos([]) is None
+
+
+def test_import_recipe_from_photos_filters_out_empty_images():
+    """An empty-bytes entry (e.g. a zero-byte upload) is dropped rather
+    than sent to the API; if that leaves nothing, this returns None
+    without ever calling the network, same as the single-photo empty-bytes
+    case."""
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"), patch.object(
+        ai_assist, "_call_gemini"
+    ) as mock_gemini:
+        assert ai_assist.import_recipe_from_photos([(b"", "image/jpeg")]) is None
+    mock_gemini.assert_not_called()
+
+
+def test_import_recipe_from_photos_returns_none_without_key():
+    with patch.object(ai_assist, "GEMINI_API_KEY", None):
+        assert ai_assist.import_recipe_from_photos([(b"bytes", "image/jpeg")]) is None
+
+
+def test_import_recipe_from_photos_prompt_mentions_multiple_photos():
+    """The prompt text itself should tell the model these photos are one
+    recipe, not describe a single "photo" when there's more than one."""
+    with patch.object(ai_assist, "GEMINI_API_KEY", "fake-key"), patch.object(
+        ai_assist, "_call_gemini", return_value=None
+    ) as mock_gemini:
+        ai_assist.import_recipe_from_photos([(b"a", "image/jpeg"), (b"b", "image/jpeg")])
+    parts = mock_gemini.call_args.args[0]
+    prompt_text = parts[0]["text"]
+    assert "2 photos" in prompt_text
+
+
 # --- graceful degradation matrix (item 5): every backend combination ---
 
 

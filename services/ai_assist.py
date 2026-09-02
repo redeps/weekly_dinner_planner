@@ -336,30 +336,46 @@ def is_photo_import_available() -> bool:
 
 
 def import_recipe_from_photo(image_bytes: bytes, *, mime_type: str = "image/jpeg") -> Optional[dict]:
-    """Extract a structured recipe draft from a photo of a cookbook page
-    or recipe card, via Gemini's vision capability — always Gemini,
-    regardless of AI_ASSIST_BACKEND (see docs/DECISIONS.md), since this
-    needs a vision-capable model and no local one is supported. Returns
-    None if no Gemini key is configured, `image_bytes` is empty, or the
-    response can't be parsed. Never written to the database directly —
-    shown as a pre-filled Add Recipe form for the user to review and
-    confirm, same as the other import paths."""
-    if not GEMINI_API_KEY or not image_bytes:
+    """Extract a structured recipe draft from a single photo of a
+    cookbook page or recipe card. Thin wrapper around
+    import_recipe_from_photos() for the common one-photo case — see that
+    function for the full contract."""
+    return import_recipe_from_photos([(image_bytes, mime_type)])
+
+
+def import_recipe_from_photos(images: list[tuple[bytes, str]]) -> Optional[dict]:
+    """Extract a structured recipe draft from one or more photos of a
+    cookbook page or recipe card (e.g. the front and back of one card, or
+    multiple pages of one recipe), via Gemini's vision capability —
+    always Gemini, regardless of AI_ASSIST_BACKEND (see
+    docs/DECISIONS.md), since this needs a vision-capable model and no
+    local one is supported. All photos are sent as separate inline_data
+    parts within a single call, not one call per photo — confirmed
+    against the real API to work, and it avoids reconciling multiple
+    independently-generated drafts that might disagree (see
+    docs/DECISIONS.md). `images` is a list of (image_bytes, mime_type)
+    pairs. Returns None if no Gemini key is configured, `images` is
+    empty, or the response can't be parsed. Never written to the
+    database directly — shown as a pre-filled Add Recipe form for the
+    user to review and confirm, same as the other import paths."""
+    images = [(data, mime) for data, mime in images if data]
+    if not GEMINI_API_KEY or not images:
         return None
+    plural = "photo" if len(images) == 1 else f"{len(images)} photos of the same recipe"
     prompt = (
-        "Extract structured recipe data from this photo of a recipe (a "
-        "cookbook page or recipe card). Respond with ONLY a single JSON "
-        f"object, no markdown fences, no commentary, matching exactly this "
-        f"shape:\n{_IMPORT_JSON_SHAPE}"
+        f"Extract structured recipe data from this {plural} (a cookbook "
+        "page or recipe card). Respond with ONLY a single JSON object, no "
+        f"markdown fences, no commentary, matching exactly this shape:\n"
+        f"{_IMPORT_JSON_SHAPE}"
     )
-    parts = [
-        {"text": prompt},
+    parts = [{"text": prompt}] + [
         {
             "inline_data": {
                 "mime_type": mime_type,
                 "data": base64.b64encode(image_bytes).decode("ascii"),
             }
-        },
+        }
+        for image_bytes, mime_type in images
     ]
     response = _call_gemini(parts, model=GEMINI_MODEL, api_key=GEMINI_API_KEY)
     if response is None:

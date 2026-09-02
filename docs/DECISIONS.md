@@ -1104,3 +1104,83 @@ place to match the new non-`None` quantity/unit output — modified, not
 counted as additions). The coverage numbers above are real measured
 output from a throwaway script run against `services/categorization.py`
 and `services/recipe_import.py` directly, not estimates.
+
+## 2026-09-02 — Multi-photo import (front/back of a recipe card)
+
+Follows up the photo-import investigation above: once the real deployed
+photo (a genuine Pixel 9 JPEG, committed to `tmp/` for testing) was
+confirmed working end-to-end, the next real need is a card with content
+on both sides. Investigated and confirmed before implementing, per this
+project's practice of not assuming API/framework behavior.
+
+**Single call with multiple `inline_data` parts, not one call per photo
+— confirmed against the real API, not assumed.** Sent two distinct real
+images as separate `inline_data` entries in one `contents` block: `200
+OK`, valid parsed response, `7.12s`. `_call_gemini()` already takes an
+arbitrary `parts: list[dict]`, so this needed zero changes there — only
+`import_recipe_from_photos()`'s part-building grows the list. Rejected
+two-calls-plus-merge: it would mean designing conflict resolution for
+two independently-generated ingredient lists/instructions that might
+disagree, for no benefit for a single-recipe multi-photo case.
+
+**`import_recipe_from_photos(images: list[tuple[bytes, str]])` is the
+real implementation; `import_recipe_from_photo()` is now a one-line
+wrapper** (`import_recipe_from_photos([(image_bytes, mime_type)])`).
+Chosen over changing the existing function's signature specifically to
+avoid touching its 8 existing tests — confirmed they still pass
+unmodified (`69 passed` across both photo-import test files together).
+Empty-bytes entries are filtered out of `images` before the
+availability/network-call check, so `import_recipe_from_photo(b"")`
+still short-circuits to `None` with no network call through the wrapper,
+matching its pre-existing contract exactly.
+
+**UI gotcha, found by testing not assumed: `accept_multiple_files=True`
+returns `[]` when nothing is uploaded, not `None`.** Confirmed directly
+via `AppTest` before touching the page. Two existing `is not None`
+checks in `pages/2_Add_Edit_Recipe.py` relied on the old single-file
+contract and would have silently broken: the "Extract from Photo" gate
+(`if photo is not None and st.button(...)`) and the cross-widget
+"photo uploaded but wrong button clicked" detector reading
+`st.session_state.get("ai_import_photo")`. Both changed to plain
+truthy checks, which correctly treat `[]` the same as `None` (and the
+not-yet-rendered case, where `.get()` returns `None`).
+
+**Cap: 3 photos, enforced in application code — `st.file_uploader` has
+no built-in max-*count* parameter** (checked its signature directly;
+only `max_upload_size`, a per-file byte limit, exists). `len(photo) > 3`
+after the widget returns shows an error and hides the "Extract from
+Photo" button entirely, rather than truncating to the first 3 silently.
+3 is deliberately small — this is for a multi-page card/recipe, not a
+bulk-import feature.
+
+**Timing at 3-photo scale — measured against the real API, not assumed
+comfortable:** 3 real-sized photos (the real Pixel 9 photo plus two
+larger synthetic ones from the earlier investigation — 2.61 MB + 0.68 MB
++ 5.63 MB, **8.92 MB combined**), 3 consecutive runs against
+`import_recipe_from_photos()` directly: **2.59s, 3.89s, 2.82s** — 8-12×
+headroom under the existing 30s photo-import timeout. **Left the timeout
+unchanged** — the 3-photo cap is doing the safety-margin work here, not
+a raised timeout; there was no evidence a raise was needed.
+
+**Existing test compatibility — verified, not assumed.** The 3 existing
+`test_recipe_photo_import_ui.py` tests use `AppTest`'s
+`file_uploader.upload()`, which appends to a list rather than replacing
+— confirmed compatible with `accept_multiple_files=True` with zero
+mechanical changes needed. One of the three did fail on first run, but
+for an unrelated reason: this change also reworded the generic failure
+message from "Couldn't extract a recipe from that photo" to "...from
+that" (dropping the now-inaccurate singular "photo," since the message
+covers 1-3 photos) — the test's exact-wording assertion was updated to
+match, not the multi-file mechanics.
+
+**Verification:** `pytest` full suite, 3 consecutive runs, **278/278
+passed each time** — confirmed up from a true baseline of **269/269**
+(re-verified fresh via `git stash -u` immediately before this change,
+not assumed carried over from the prior entry — a first draft of this
+entry claimed 288/19-new before that check was actually run against the
+real baseline; caught and corrected before committing, not left wrong).
+9 net new tests: 6 in `tests/test_ai_assist_service.py` for
+`import_recipe_from_photos()`, 3 in `tests/test_recipe_photo_import_ui.py`
+for the cap and the combined-photos flow (1 existing assertion in that
+file also updated for the reworded message — modified, not counted as an
+addition).
