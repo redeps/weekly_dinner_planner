@@ -17,6 +17,7 @@ from database import get_connection
 from models import DAYS_OF_WEEK, CalendarDay
 from services.auth import require_password
 from services.calendar import build_default_week_calendar
+from services.email import add_recipient, list_recipients, remove_recipient
 from services.settings import get_default_household_size, set_default_household_size
 
 st.set_page_config(page_title="Weekly Calendar — Meal Planner", page_icon="🍽️")
@@ -92,6 +93,29 @@ if hosting_this_week == "Yes":
             key=f"cal_household_size_{day_name}",
         )
         household_override_by_day[day_name] = int(size)
+
+st.divider()
+st.subheader("Email recipients")
+st.caption("The weekly plan can be emailed to this list from the Week Plan page.")
+
+recipients = list_recipients(conn)
+if recipients:
+    for email in recipients:
+        cols = st.columns([4, 1])
+        cols[0].write(email)
+        if cols[1].button("Remove", key=f"remove_recipient_{email}"):
+            remove_recipient(conn, email)
+            st.rerun()
+else:
+    st.caption("_No recipients added yet._")
+
+new_recipient_email = st.text_input("Add an email address", key="new_recipient_email")
+if st.button("Add recipient"):
+    try:
+        add_recipient(conn, new_recipient_email)
+        st.rerun()
+    except ValueError as exc:
+        st.error(str(exc))
 
 st.session_state["weekly_calendar"] = [
     CalendarDay(

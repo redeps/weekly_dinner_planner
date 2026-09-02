@@ -249,3 +249,42 @@ uniformly, and not Cook Mode's instruction text.
   showing blank. See docs/DECISIONS.md for the full investigation,
   including confirmation that `build_grocery_list()`'s existing name/unit
   aggregation logic is unaffected by scaled (decimal) quantities.
+
+## Milestone 15 — Email the Weekly Plan ✅
+
+A manually-triggered button, not a scheduled job: sends the current week
+plan to a small, household-maintained list of recipient email addresses.
+Sized as a single contained pass, not a phased breakdown — appended here
+rather than inserted earlier, same reasoning as Milestone 14 (this wasn't
+part of the original milestone sequence and doesn't retroactively renumber
+it).
+
+- `email_recipients` — a new table (`id`, `email` `UNIQUE`, `created_at`),
+  one row per address, not a JSON list on `app_settings` — see
+  docs/DECISIONS.md for why.
+- `services/email.py` — recipient add/remove/list, plain-text email body
+  built from the same `list_plan_days()`/`get_recipe()` calls
+  `pages/5_Week_Plan.py` already uses to render the page (day, date,
+  recipe name, cook time — not the full instructions), and the send
+  itself via stdlib `smtplib`, one message per recipient.
+- Weekly Calendar screen: an "Email recipients" add/remove list below the
+  household-size section (the app's one existing standing-settings
+  screen).
+- Week Plan screen: a "Send weekly plan by email" button below "Finalize
+  Plan," hidden behind an explanatory caption when the recipient list is
+  empty. Reports success/partial-failure/failure per recipient rather
+  than a single pass/fail verdict for the whole send — see
+  docs/DECISIONS.md for why this differs from R2 sync's and
+  `PhotoBackupError`'s failure-handling.
+- New `[smtp]` secrets section (`host`, `port`, `username`,
+  `app_password`), presence-detected via `st.secrets.get("smtp")` like R2
+  rather than a separate on/off flag — see docs/SETUP.md.
+- **Known unverified risk, flagged rather than assumed away:** whether
+  Streamlit Community Cloud's outbound network actually permits SMTP on
+  port 587/465 could not be confirmed from this environment — evidence
+  from other Streamlit Community Cloud deployments is mixed (some report
+  successful Gmail SMTP sends, others report silent delivery failure once
+  deployed, though not conclusively a network-level block in every case).
+  Local dev and mocked tests can't surface this either way. See
+  docs/DECISIONS.md — this needs an actual deployed test send to confirm
+  once Milestone 13 (Hosted Version) is live.

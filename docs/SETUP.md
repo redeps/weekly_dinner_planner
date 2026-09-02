@@ -259,6 +259,40 @@ aws_secret_access_key = "..."
 bucket_name = "meal-planner-photos"
 ```
 
+**Email the weekly plan (Milestone 15) ✅ done:** stdlib `smtplib` against
+an SMTP provider (e.g. Gmail with an app password) — see docs/DECISIONS.md.
+`.streamlit/secrets.toml` needs an `[smtp]` section only once you actually
+want the "Send weekly plan by email" button (on the Week Plan page) to
+work; with no `[smtp]` section at all, the button still appears whenever
+recipients are configured but shows a clear error on click rather than
+silently failing.
+
+```toml
+[smtp]
+host = "smtp.gmail.com"
+port = 587
+username = "yourhousehold@gmail.com"
+app_password = "xxxxxxxxxxxxxxxx"
+```
+
+For Gmail specifically: the account needs 2-Step Verification turned on,
+then an **app password** generated at
+[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+(your regular Google password will not work over SMTP — plain-password
+"less secure app" access was retired in 2022). Use the 16-character app
+password as `app_password` above, never your real account password. A
+free personal Gmail account allows up to 500 recipients/day and up to 100
+recipients per single SMTP message — sending a weekly plan to a small
+household recipient list is trivially within this.
+
+**Not yet confirmed: whether Streamlit Community Cloud's outbound network
+permits SMTP on port 587/465 at all.** Some free hosting platforms block
+outbound SMTP as an anti-spam measure; this can only be tested with an
+actual deployed send, which hasn't happened yet (Milestone 13's hosted
+deployment isn't live). If the "Send weekly plan by email" button works
+locally but fails once deployed, this is the first thing to check — see
+docs/DECISIONS.md.
+
 **Hosted deployment (Phase 3, remaining part not yet implemented):** the
 app deploys as a **public** app on Streamlit Community Cloud, from a
 **public** GitHub repo (the free tier's one private-app slot is already
@@ -284,7 +318,7 @@ an unreachable Ollama server, not because anything is actually broken.
 So for any hosted deployment, this line is effectively **required**, not
 optional, for those features to work at all.
 
-This is the one place all five secrets converge into a single box, so
+This is the one place all six secrets converge into a single box, so
 the exact shape matters — the three root-level keys **must** go before
 either `[section]` header, same rule as step 11:
 
@@ -301,11 +335,19 @@ endpoint_url = "https://<account-id>.r2.cloudflarestorage.com"
 aws_access_key_id = "..."
 aws_secret_access_key = "..."
 bucket_name = "meal-planner-photos"
+
+[smtp]
+host = "smtp.gmail.com"
+port = 587
+username = "yourhousehold@gmail.com"
+app_password = "xxxxxxxxxxxxxxxx"
 ```
 
 Whatever platform specifics change between now and Phase 3 actually
 starting, the same never-commit-a-secret rule from steps 10-11 applies to
-all of these too.
+all of these too. `[smtp]` is optional in this box like `[r2]` — the
+"Send weekly plan by email" button just shows an error on click if it's
+missing, rather than the deployed app failing to start.
 
 ## Quick reference
 

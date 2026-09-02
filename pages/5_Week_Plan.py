@@ -17,6 +17,7 @@ from services import ai_assist, photos
 from services.auth import require_password
 from services.calendar import build_default_week_calendar
 from services.cook_history import finalize_plan, has_been_cooked, mark_day_cooked
+from services.email import SmtpConnectionError, list_recipients, send_weekly_plan_email
 from services.plan_generation import (
     generate_week_plan,
     get_latest_week_plan,
@@ -64,6 +65,29 @@ st.caption(f"Week of {week_plan.week_start_date}")
 if st.button("Finalize Plan (mark all cooked)"):
     finalize_plan(conn, week_plan.id)
     st.rerun()
+
+email_recipients = list_recipients(conn)
+if email_recipients:
+    if st.button("Send weekly plan by email"):
+        try:
+            sent, failed = send_weekly_plan_email(conn, week_plan)
+        except SmtpConnectionError as exc:
+            st.error(f"Couldn't send: {exc}")
+        else:
+            total = len(sent) + len(failed)
+            if not failed:
+                st.success(f"Sent to {len(sent)} recipient{'s' if len(sent) != 1 else ''}.")
+            else:
+                failure_detail = "; ".join(f"{addr} ({reason})" for addr, reason in failed.items())
+                if sent:
+                    st.warning(f"Sent to {len(sent)} of {total}. Failed: {failure_detail}")
+                else:
+                    st.error(f"Couldn't send to any recipient. Failed: {failure_detail}")
+else:
+    st.caption(
+        "Add recipient email addresses on the Weekly Calendar page to enable "
+        "emailing the plan."
+    )
 
 for plan_day in list_plan_days(conn, week_plan.id):
     recipe = get_recipe(conn, plan_day.recipe_id) if plan_day.recipe_id else None
