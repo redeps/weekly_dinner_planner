@@ -1,6 +1,6 @@
-streamlit
+streamlit==1.62.0
 pytest
-Pillow
-psycopg[binary]
-boto3
+Pillow==12.3.0
+psycopg[binary]==3.3.5
+boto3==1.43.85
 moto

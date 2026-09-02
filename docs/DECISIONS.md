@@ -1273,3 +1273,57 @@ not assumed). 20 net new tests: 6 in `tests/test_settings_service.py`, 6
 in `tests/test_grocery_list_service.py`, 6 in the new
 `tests/test_household_scaling_ui.py`, 1 each in `test_calendar_service.py`
 and `test_plan_generation_service.py`.
+
+## 2026-09-02 — `requirements.txt` gains real version pins, after a deployed `AttributeError` that wasn't actually a git-sync problem
+
+Follow-up to the multi-photo photo-import investigation: a real crash on
+the deployed app (`AttributeError: module 'services.ai_assist' has no
+attribute 'import_recipe_from_photos'`, at what the deployed app reported
+as `pages/2_Add_Edit_Recipe.py:189`) looked at first like the same
+git-sync staleness this project has hit repeatedly (see the "Add files
+via upload" merge entries above). **Checked directly, not assumed this
+time — it wasn't that.** `git fetch origin` + `git log
+origin/main..main` and `git log main..origin/main` both came back empty:
+local `main` and `origin/main` were already identical, both at `5da40bc`
+(confirmed further via `git rev-parse main origin/main` — same hash,
+`5da40bc...`), and `import_recipe_from_photos` is genuinely present in
+that committed tree (`git show HEAD:services/ai_assist.py`, line 346).
+**There was nothing to push.** The mismatch was between origin/main and
+whatever Streamlit Cloud's running container actually has — a redeploy/
+rebuild staleness on Streamlit Cloud's own side, not a local-vs-remote
+git problem, and not something `git push` can fix. Only the "Manage app"
+dashboard (reboot/redeploy) can resolve that half; it's outside anything
+this session can do directly.
+
+**Real, fixable gap found along the way: `requirements.txt` pinned
+nothing.** `streamlit`, `pytest`, `Pillow`, `psycopg[binary]`, `boto3`,
+and `moto` were all bare package names — a `pip install -r
+requirements.txt` on a Streamlit Cloud rebuild could silently resolve
+different versions than whatever's been tested against locally. Fixed by
+pinning to what's actually confirmed working here:
+
+```
+streamlit==1.62.0
+pytest
+Pillow==12.3.0
+psycopg[binary]==3.3.5
+boto3==1.43.85
+moto
+```
+
+**Not every package pinned — `pytest` and `moto` deliberately left loose,
+confirmed by checking, not assumed.** `grep`ing the whole codebase for
+`import pytest`/`import moto`/`from moto`/`from pytest` outside `tests/`
+turned up nothing — neither is ever imported by `app.py`, any `pages/*.py`,
+or any `services/*.py`. They only run during `pytest` itself, never as
+part of serving the deployed app, so a version drift in either can't
+reproduce the "works locally, breaks on Cloud" failure mode this fix is
+for — pinning them would add version-bump maintenance burden for a risk
+that doesn't apply to them. `streamlit`, `Pillow`, `psycopg[binary]`, and
+`boto3` are all genuinely imported by app-facing code and run inside the
+deployed app itself, so those four are pinned exactly.
+
+**Verification:** `pip install -r requirements.txt` against the pinned
+file resolved cleanly with no conflicts (`Requirement already satisfied`
+for every package, at exactly the pinned versions). `pytest` full suite,
+3 consecutive runs, **298/298 passed each time**.
