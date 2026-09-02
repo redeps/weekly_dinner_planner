@@ -37,7 +37,7 @@ OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = os.environ.get("AI_ASSIST_MODEL", "llama3.2")
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-latest")
 
 _raw_backend = os.environ.get("AI_ASSIST_BACKEND", "ollama").strip().lower()
 AI_ASSIST_BACKEND = _raw_backend if _raw_backend in ("ollama", "gemini") else "ollama"

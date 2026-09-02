@@ -142,7 +142,22 @@ if not existing:
             if draft:
                 _apply_import_draft(draft)
             elif not source:
-                st.error("Paste a recipe URL or some recipe text first.")
+                # "Import" only ever reads the text/URL field above — a
+                # photo uploaded into the separate widget below is
+                # otherwise silently ignored by this button, which used to
+                # show this same message even when a photo *was* there.
+                # Streamlit rehydrates a keyed widget's value into
+                # session_state before this point in the script runs, even
+                # though st.file_uploader(key="ai_import_photo") is
+                # declared further down, so this check works here.
+                if st.session_state.get("ai_import_photo") is not None:
+                    st.error(
+                        "That photo won't be used by this button — click "
+                        "'Extract from Photo' below it instead, or paste a "
+                        "URL/text here to use Import."
+                    )
+                else:
+                    st.error("Paste a recipe URL or some recipe text first.")
             else:
                 st.error(
                     "Couldn't extract a recipe from that — check the text/URL, "
@@ -151,8 +166,13 @@ if not existing:
 
         if ai_assist.is_photo_import_available():
             photo = st.file_uploader(
-                "Or upload a photo of a recipe (cookbook page, recipe card)",
+                "📋 Or upload a photo to auto-fill this form (AI)",
                 type=["jpg", "jpeg", "png"],
+                key="ai_import_photo",
+            )
+            st.caption(
+                "Used once to pre-fill the fields below, then discarded — "
+                "not saved as the recipe's photo."
             )
             if photo is not None and st.button("Extract from Photo"):
                 draft = ai_assist.import_recipe_from_photo(photo.getvalue(), mime_type=photo.type)
@@ -164,7 +184,9 @@ if not existing:
                         "image, or fill in the form manually below."
                     )
 
-st.subheader("Photo")
+st.divider()
+
+st.subheader("🖼️ Photo")
 current_photo_path = existing.photo_path if existing else None
 if photos.photo_exists(current_photo_path):
     st.image(str(photos.resolve_photo_path(current_photo_path)), width=200)
@@ -173,7 +195,7 @@ else:
     remove_photo = False
 
 recipe_photo_upload = st.file_uploader(
-    "Replace photo" if photos.photo_exists(current_photo_path) else "Upload a photo",
+    "🖼️ Replace photo" if photos.photo_exists(current_photo_path) else "🖼️ Upload a photo",
     type=["jpg", "jpeg", "png"],
     key="af_photo_upload",
 )
