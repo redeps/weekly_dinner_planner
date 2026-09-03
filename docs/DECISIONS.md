@@ -1815,3 +1815,103 @@ sections now follow the same rule stated once in the page's own module
 docstring: every gate's default is derived from the durable
 `weekly_calendar` list, never from the gating widget's own persisted
 state alone.
+
+## 2026-09-03 — Ingredient name canonicalization for grocery-list grouping
+
+Investigated a reported grocery-list duplication problem (e.g. "Salt",
+"Salt & Pepper", "4 ts salt" all showing as separate lines) before
+implementing anything, against the real dev DB (105 ingredient rows / 90
+distinct raw names, real BBC Good Food-style URL imports).
+
+**The real data inverted the expected approach.** The reported example
+suggested short, clean name variants, where a synonym/alias table
+(mapping known short spellings to one canonical identity) would carry
+most of the coverage. The actual dev DB doesn't look like that —
+`recipeIngredient` lines are stored whole (Milestone 10), so `name` is
+usually near-full prose ("garlic cloves finely chopped", "large red
+onion cut into thin wedges"). Measured against the real data: a
+generic, bilingual descriptive-noise-word/phrase stripper (chopped,
+crushed, finely, of, clove(s), large, fresh, ...), with **zero**
+ingredient-specific alias-table entries, collapsed 21/90 (23.3%) of
+distinct raw names into 7 shared canonical groups (garlic, onion,
+parmesan, beef stock, crème fraîche, canned tomatoes, lime leaves,
+parsley). The alias table — the piece expected to carry the win — wasn't
+needed for a single real merge in this corpus. It still exists, seeded
+sparse, because genuinely-different-word synonyms (US/UK vocabulary
+differences especially) will matter more once recipes from more sources
+get imported; this particular sample of UK-vocabulary imports simply
+didn't happen to surface one yet.
+
+**Rejected reusing `services/categorization.py`'s keyword dictionary for
+name identity, confirmed by testing, not assumed.** Its longest-substring
+match is tuned for store-aisle breadth (a generic "tomato" hit is fine
+when the only question is which aisle), but tried directly as a name
+canonicalizer it wrongly collapsed "tomato purée" into the same group as
+canned and fresh tomatoes — three different products a shopper buys
+separately, unified only because all three contain the substring
+"tomato". Name-identity grouping needs to be more conservative than
+aisle grouping, so `services/ingredient_canonicalization.py` is a
+separate module with its own, smaller, purpose-built dictionary — noise
+words to strip, plus a sparse exact-match alias table (never a substring
+match, specifically to avoid reintroducing this over-merge risk).
+Confirmed the conservative approach doesn't just avoid that one case but
+holds generally: "cherry tomatoes", "tomato purée", and canned "tomatoes"
+all stay distinct, as do olive/sunflower/vegetable oil (genuinely
+different products that happen to share a word).
+
+**Fixed the Unicode-fraction leading-junk-stripper gap found during
+investigation, in this same pass rather than deferring it.** The
+original numeric-prefix regex only matched ASCII digits, so
+`"/3½fl oz beef stock"` stripped to `"fl oz beef stock"` instead of
+`"beef stock"` — the vulgar-fraction character `½` fell outside the
+digit class, and the regex only consumed one leading quantity segment,
+not the two in `"/1lb 2oz fillet steak sliced"`. Extended the digit
+class to recognize common vulgar-fraction characters (½¼¾⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞)
+and made the leading-segment match repeat (`+`) instead of matching once.
+Re-run against the real strings: `"/3½fl oz beef stock"` now merges
+correctly with plain `"beef stock"`; `"/1lb 2oz fillet steak sliced"`
+now produces `"fillet steak"` instead of `"oz fillet steak"`. This
+improved the measured real coverage from 19/90 (21.1%, investigation-
+time number) to 21/90 (23.3%) — a real, measured gain, not a cosmetic
+one; `"beef stock"` became a genuinely new correctly-merged group.
+
+**Grocery-list grouping: canonical heading, quantities re-summed (not
+just clustered) per distinct unit within the group, no-quantity lines
+shown inline.** `GroceryItem` changed shape — from one row per (raw name,
+unit) pair to one row per canonical name, carrying a list of
+`GroceryUnitLine`s (one per distinct unit actually seen, or an unscaled
+line). Quantities are only ever summed within a matching unit, never
+across units (e.g. "2 tbsp" is never combined with "112 ml") — the same
+"don't attempt risky cross-unit conversion" boundary this module already
+respected before canonicalization existed, now also enforced *within* a
+merged canonical group, not just across differently-named ingredients.
+`pages/6_Grocery_List.py` renders a single-line group exactly as before
+this existed (no visual change for the common case); a group with more
+than one line gets a heading with its lines indented underneath, instead
+of those lines being scattered elsewhere in the category section.
+
+**Norwegian coverage: structurally ready, deliberately not reported as a
+real number.** The noise-word list and alias table both include a small
+set of Norwegian entries (hakket, revet, skivet, "løk" → onion,
+"hvitløk" → garlic, etc.), matching `categorization.py`'s bilingual
+shape — but the dev DB currently has zero Norwegian-sourced recipes to
+measure real coverage against. Reporting a Norwegian percentage right
+now would be a fabricated number dressed up as measured; it isn't
+reported here, and shouldn't be assumed accurate until real Norwegian
+imports exist to test against and the entries can be grown from that,
+the same way `categorization.py`'s own dictionary grew from real
+testing rather than being written speculatively.
+
+**What this still can't solve, confirmed with real examples rather than
+hypothesized:** novel phrasing with no shared surviving token ("of thai
+basil" vs. "large handful basil leaves torn" — both basil, don't merge);
+singular/plural ("carrot" vs. "carrots" — no stemming attempted, since a
+stemmer risks wrongly collapsing unrelated short words); and compound
+lines naming two ingredients in one string ("salt and pepper") — not
+split, none observed in the current corpus. Scope was deliberately
+grouping/normalization only — not further improving quantity/unit
+extraction coverage itself (a handful of remaining ugly leading-fragment
+cases are really extraction artifacts, not canonicalization failures),
+and not the separate "favor recipes that share ingredients across the
+week" feature, which depends on this working first and is scoped
+separately once real usage of this shows how well it holds up.

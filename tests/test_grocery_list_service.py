@@ -83,12 +83,17 @@ def test_build_grocery_list_sums_matching_name_and_unit_across_recipes(conn):
 
     result = grocery_service.build_grocery_list(conn, week_plan_id)
 
-    assert [item.name for item in result["pantry"]] == ["flour"]
-    assert result["pantry"][0].quantity == 500
-    assert result["pantry"][0].unit == "g"
+    assert [item.name for item in result["pantry"]] == ["Flour"]
+    assert len(result["pantry"][0].lines) == 1
+    assert result["pantry"][0].lines[0].quantity == 500
+    assert result["pantry"][0].lines[0].unit == "g"
 
 
-def test_build_grocery_list_keeps_different_units_separate(conn):
+def test_build_grocery_list_keeps_different_units_as_separate_lines_in_one_group(conn):
+    """Different units for the same canonical ingredient don't get summed
+    together (real unit conversion this app doesn't do) -- but they DO
+    land in the same canonical-name group, as separate lines, rather than
+    as two entirely separate list items."""
     recipe_a = make_recipe(
         conn, "Recipe A", [{"name": "flour", "quantity": 200, "unit": "g", "store_category": "pantry"}]
     )
@@ -99,8 +104,8 @@ def test_build_grocery_list_keeps_different_units_separate(conn):
 
     result = grocery_service.build_grocery_list(conn, week_plan_id)
 
-    assert len(result["pantry"]) == 2
-    by_unit = {item.unit: item.quantity for item in result["pantry"]}
+    assert [item.name for item in result["pantry"]] == ["Flour"]
+    by_unit = {line.unit: line.quantity for line in result["pantry"][0].lines}
     assert by_unit == {"g": 200, "cups": 2}
 
 
@@ -112,7 +117,7 @@ def test_build_grocery_list_doubles_when_recipe_repeats_within_week(conn):
 
     result = grocery_service.build_grocery_list(conn, week_plan_id)
 
-    assert result["pantry"][0].quantity == 400
+    assert result["pantry"][0].lines[0].quantity == 400
 
 
 def test_build_grocery_list_normalizes_name_and_unit_casing_and_whitespace(conn):
@@ -127,10 +132,11 @@ def test_build_grocery_list_normalizes_name_and_unit_casing_and_whitespace(conn)
     result = grocery_service.build_grocery_list(conn, week_plan_id)
 
     assert len(result["pantry"]) == 1
-    assert result["pantry"][0].quantity == 250
-    # display name/unit come from the first entry seen
+    assert result["pantry"][0].lines[0].quantity == 250
+    # display name is the canonical name, capitalized; unit comes from
+    # the first entry seen for that (canonical, unit) pair
     assert result["pantry"][0].name == "Flour"
-    assert result["pantry"][0].unit == "G"
+    assert result["pantry"][0].lines[0].unit == "G"
 
 
 def test_build_grocery_list_handles_missing_quantity_without_duplicating(conn):
@@ -142,7 +148,7 @@ def test_build_grocery_list_handles_missing_quantity_without_duplicating(conn):
     result = grocery_service.build_grocery_list(conn, week_plan_id)
 
     assert len(result["pantry"]) == 1
-    assert result["pantry"][0].quantity is None
+    assert result["pantry"][0].lines[0].quantity is None
 
 
 def test_build_grocery_list_groups_by_store_category(conn):
@@ -159,8 +165,8 @@ def test_build_grocery_list_groups_by_store_category(conn):
     result = grocery_service.build_grocery_list(conn, week_plan_id)
 
     assert set(result.keys()) == {"produce", "meat"}
-    assert result["produce"][0].name == "onion"
-    assert result["meat"][0].name == "chicken"
+    assert result["produce"][0].name == "Onion"
+    assert result["meat"][0].name == "Chicken"
 
 
 def test_build_grocery_list_omits_empty_categories(conn):
@@ -194,7 +200,7 @@ def test_build_grocery_list_scales_quantity_by_day_household_size_override(conn)
         conn, [("monday", recipe)], household_size_overrides={"monday": 8}
     )
     result = grocery_service.build_grocery_list(conn, week_plan_id)
-    assert result["pantry"][0].quantity == 400
+    assert result["pantry"][0].lines[0].quantity == 400
 
 
 def test_build_grocery_list_uses_global_default_when_no_override(conn):
@@ -206,7 +212,7 @@ def test_build_grocery_list_uses_global_default_when_no_override(conn):
     )
     week_plan_id = make_week_plan(conn, [("monday", recipe)])
     result = grocery_service.build_grocery_list(conn, week_plan_id)
-    assert result["pantry"][0].quantity == 400
+    assert result["pantry"][0].lines[0].quantity == 400
 
 
 def test_build_grocery_list_unchanged_when_household_size_equals_servings(conn):
@@ -220,7 +226,7 @@ def test_build_grocery_list_unchanged_when_household_size_equals_servings(conn):
     )
     week_plan_id = make_week_plan(conn, [("monday", recipe)])
     result = grocery_service.build_grocery_list(conn, week_plan_id)
-    assert result["pantry"][0].quantity == 200
+    assert result["pantry"][0].lines[0].quantity == 200
 
 
 def test_build_grocery_list_rounds_scaled_quantity_to_two_decimals(conn):
@@ -232,8 +238,8 @@ def test_build_grocery_list_rounds_scaled_quantity_to_two_decimals(conn):
     )
     week_plan_id = make_week_plan(conn, [("monday", recipe)])  # default size 4 -> 4/6
     result = grocery_service.build_grocery_list(conn, week_plan_id)
-    assert result["pantry"][0].quantity == round(1 * (DEFAULT_HOUSEHOLD_SIZE / 6), 2)
-    assert result["pantry"][0].quantity == 0.67
+    assert result["pantry"][0].lines[0].quantity == round(1 * (DEFAULT_HOUSEHOLD_SIZE / 6), 2)
+    assert result["pantry"][0].lines[0].quantity == 0.67
 
 
 def test_build_grocery_list_sums_scaled_quantities_across_different_household_sizes(conn):
@@ -262,7 +268,7 @@ def test_build_grocery_list_sums_scaled_quantities_across_different_household_si
     )
     result = grocery_service.build_grocery_list(conn, week_plan_id)
     # 1*(6/4) + 1*(4/6) + 2*(4/4) + 2*(5/4), each rounded to 2dp before summing
-    assert result["pantry"][0].quantity == 6.67
+    assert result["pantry"][0].lines[0].quantity == 6.67
 
 
 def test_build_grocery_list_missing_quantity_stays_unscaled_regardless_of_household_size(conn):
@@ -273,7 +279,7 @@ def test_build_grocery_list_missing_quantity_stays_unscaled_regardless_of_househ
         conn, [("monday", recipe)], household_size_overrides={"monday": 10}
     )
     result = grocery_service.build_grocery_list(conn, week_plan_id)
-    assert result["pantry"][0].quantity is None
+    assert result["pantry"][0].lines[0].quantity is None
 
 
 def test_build_grocery_list_sorts_items_alphabetically_within_category(conn):
@@ -289,4 +295,104 @@ def test_build_grocery_list_sorts_items_alphabetically_within_category(conn):
 
     result = grocery_service.build_grocery_list(conn, week_plan_id)
 
-    assert [item.name for item in result["produce"]] == ["apple", "zucchini"]
+    assert [item.name for item in result["produce"]] == ["Apple", "Zucchini"]
+
+
+# --- Ingredient name canonicalization (services/ingredient_canonicalization.py) ---
+# Regression tests using the real, messy raw ingredient-name strings found
+# in the dev DB during investigation (see docs/DECISIONS.md), not
+# synthetic clean examples.
+
+
+def test_build_grocery_list_merges_real_garlic_variants_into_one_group(conn):
+    """The real before/after from investigation: 4 differently-phrased
+    real garlic lines (BBC Good Food-style imports) collapse into one
+    canonical group instead of 4 separate list lines. Also confirms the
+    don't-merge-across-units safety within that group: three unit-less
+    quantities sum together, but the one "clove"-unit entry stays a
+    separate line rather than being folded in."""
+    recipe_a = make_recipe(
+        conn, "A", [{"name": "garlic clove finely grated", "quantity": 1, "store_category": "produce"}]
+    )
+    recipe_b = make_recipe(
+        conn, "B", [{"name": "garlic cloves crushed", "quantity": 3, "store_category": "produce"}]
+    )
+    recipe_c = make_recipe(
+        conn, "C", [{"name": "garlic cloves finely chopped", "quantity": 2, "store_category": "produce"}]
+    )
+    recipe_d = make_recipe(
+        conn, "D", [{"name": "of  garlic", "quantity": 1, "unit": "clove", "store_category": "produce"}]
+    )
+    week_plan_id = make_week_plan(
+        conn,
+        [("monday", recipe_a), ("tuesday", recipe_b), ("wednesday", recipe_c), ("thursday", recipe_d)],
+    )
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+
+    garlic_items = [item for item in result["produce"] if item.name == "Garlic"]
+    assert len(garlic_items) == 1, "4 raw variants must collapse into exactly 1 canonical group"
+    by_unit = {line.unit: line.quantity for line in garlic_items[0].lines}
+    assert by_unit == {None: 6, "clove": 1}
+
+
+def test_build_grocery_list_merges_real_onion_variants_into_one_group(conn):
+    recipe_a = make_recipe(
+        conn, "A", [{"name": "large onion chopped", "quantity": 1, "store_category": "produce"}]
+    )
+    recipe_b = make_recipe(
+        conn, "B", [{"name": "onion finely chopped", "quantity": 2, "store_category": "produce"}]
+    )
+    recipe_c = make_recipe(
+        conn, "C", [{"name": "onion sliced", "quantity": 1, "store_category": "produce"}]
+    )
+    recipe_d = make_recipe(
+        conn, "D", [{"name": "onion thinly sliced", "quantity": 1, "store_category": "produce"}]
+    )
+    week_plan_id = make_week_plan(
+        conn,
+        [("monday", recipe_a), ("tuesday", recipe_b), ("wednesday", recipe_c), ("thursday", recipe_d)],
+    )
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+
+    onion_items = [item for item in result["produce"] if item.name == "Onion"]
+    assert len(onion_items) == 1, "4 raw variants must collapse into exactly 1 canonical group"
+    assert onion_items[0].lines == [onion_items[0].lines[0]]  # a single, summed line
+    assert onion_items[0].lines[0].quantity == 5
+
+
+def test_build_grocery_list_keeps_cherry_tomatoes_separate_from_canned_tomatoes(conn):
+    """Confirmed non-over-merge: distinct products that happen to share a
+    word must not be folded into one group."""
+    recipe_a = make_recipe(
+        conn, "A", [{"name": "cherry tomatoes halved", "quantity": 100, "unit": "g", "store_category": "produce"}]
+    )
+    recipe_b = make_recipe(
+        conn, "B", [{"name": "can chopped tomatoes", "quantity": 400, "unit": "g", "store_category": "produce"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe_a), ("tuesday", recipe_b)])
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+
+    names = {item.name for item in result["produce"]}
+    assert names == {"Cherry tomatoes", "Tomatoes"}
+
+
+def test_build_grocery_list_unicode_fraction_beef_stock_merges_correctly(conn):
+    """Regression test for the Unicode-fraction leading-junk-stripper
+    fix: '/3½fl oz beef stock' must now merge with plain 'beef stock'
+    instead of leaking a wrong 'fl oz beef stock' group."""
+    recipe_a = make_recipe(
+        conn, "A", [{"name": "/3½fl oz beef stock", "quantity": 100, "unit": "ml", "store_category": "pantry"}]
+    )
+    recipe_b = make_recipe(
+        conn, "B", [{"name": "beef stock", "quantity": 500, "unit": "ml", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe_a), ("tuesday", recipe_b)])
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+
+    stock_items = [item for item in result["pantry"] if item.name == "Beef stock"]
+    assert len(stock_items) == 1
+    assert stock_items[0].lines[0].quantity == 600
