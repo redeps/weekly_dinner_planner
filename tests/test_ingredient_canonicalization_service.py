@@ -8,7 +8,7 @@ docs/DECISIONS.md were measured against and what this module actually
 has to cope with day to day.
 """
 
-from services.ingredient_canonicalization import canonicalize_ingredient_name
+from services.ingredient_canonicalization import canonicalize_ingredient_name, normalize_unit
 
 
 # --- noise-word/phrase stripping merges real variant phrasings ---
@@ -148,3 +148,74 @@ def test_all_noise_input_falls_back_to_original_rather_than_empty():
 
 def test_plain_name_with_no_noise_is_unchanged():
     assert canonicalize_ingredient_name("Butter") == "butter"
+
+
+# --- normalize_unit: real examples from the reported grocery-list output ---
+
+
+def test_tablespoons_normalizes_to_tbsp():
+    """Real example: Ginger showed as '2 tbsp' and '2 teaspoons' -- two
+    separate lines. This is the tbsp half of that pair."""
+    assert normalize_unit("tablespoons") == "tbsp"
+    assert normalize_unit("tbsp") == "tbsp"
+
+
+def test_teaspoons_normalizes_to_tsp():
+    assert normalize_unit("teaspoons") == "tsp"
+    assert normalize_unit("tsp") == "tsp"
+
+
+def test_tbsp_and_tsp_remain_permanently_distinct():
+    """Not a request to convert between tbsp and tsp -- they're
+    genuinely different units and must never normalize to each other."""
+    assert normalize_unit("tbsp") != normalize_unit("tsp")
+    assert normalize_unit("tablespoons") != normalize_unit("teaspoons")
+
+
+def test_normalize_unit_is_case_and_whitespace_insensitive():
+    assert normalize_unit("  Tablespoons ") == "tbsp"
+    assert normalize_unit("G") == "g"
+
+
+def test_normalize_unit_unrecognized_unit_passes_through_lowercased():
+    assert normalize_unit("clove") == "clove"
+    assert normalize_unit("Cup") == "cup"
+
+
+def test_normalize_unit_empty_or_none_returns_empty_string():
+    assert normalize_unit(None) == ""
+    assert normalize_unit("") == ""
+    assert normalize_unit("   ") == ""
+
+
+# --- new noise-word/phrase additions (real gaps found in the reported output) ---
+
+
+def test_divided_is_stripped_as_noise():
+    """Real example: 'Cornstarch' (plain) vs. 'Cornstarch divided' didn't
+    merge -- 'divided' wasn't a recognized noise word."""
+    assert canonicalize_ingredient_name("Cornstarch divided") == canonicalize_ingredient_name(
+        "Cornstarch"
+    )
+
+
+def test_to_garnish_is_stripped_as_noise():
+    """Real example: 'Sesame seeds to garnish' -- same shape as the
+    already-handled 'to serve'/'to taste'."""
+    assert canonicalize_ingredient_name("Sesame seeds to garnish") == canonicalize_ingredient_name(
+        "Sesame seeds"
+    )
+
+
+def test_and_merges_compound_phrasing_with_already_compounded_line():
+    """Real example: 'Salt and pepper' and the literal 'Salt pepper' line
+    should now merge, since 'and' is stripped as noise -- but neither
+    should ever merge with plain 'Salt' alone (a compound line still
+    represents two ingredients bought together, a genuinely different
+    shopping item from salt by itself)."""
+    salt_and_pepper = canonicalize_ingredient_name("Salt and pepper")
+    salt_pepper = canonicalize_ingredient_name("Salt pepper")
+    salt = canonicalize_ingredient_name("Salt")
+    assert salt_and_pepper == salt_pepper
+    assert salt_and_pepper != salt
+    assert salt_pepper != salt

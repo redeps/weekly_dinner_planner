@@ -2016,3 +2016,192 @@ value of this feature is expected to grow as the recipe pool grows —
 more recipes means more chances for genuinely distinctive overlap to
 exist and for the bonus to have real signal to work with — not
 something this pass oversells at the current scale.
+
+## 2026-09-03 — Grocery-list duplication follow-up: unit normalization, noise-word additions, and two non-bugs worth recording
+
+Investigated a report of "extensive duplication and rendering bugs" in
+the deployed grocery list, against a real pasted example from that
+deployed app (a larger, separately-imported recipe set this dev
+environment has no direct access to — see below). Two of the four
+reported symptoms were real bugs; two were not, and are recorded here so
+this exact investigation doesn't get re-run from scratch if the same-
+looking symptom resurfaces.
+
+**Staleness, ruled out by output structure, not by reaching the deployed
+app.** This dev environment can't reach the deployed app or its Neon
+database directly. Confirmed staleness wasn't the issue anyway: the
+reported output's *shape* — bold-ish headings ("Garlic", "Cooking oil")
+each followed by indented per-unit sub-lines, unscaled entries shown
+inline within their group — is structurally impossible to produce from
+any commit before the canonicalization/grouping work landed (pre-
+canonicalization code rendered one flat line per raw name+unit, no
+grouping at all). The deployed app was running current-era code.
+
+**Not a bug — "don't merge across units" working exactly as designed.**
+The reported "Garlic" followed by a bare "22" with no unit turned out to
+be two genuinely different units (an unspecified count and "cloves")
+correctly kept as separate lines within one canonical group — exactly
+the existing, already-tested behavior
+(`test_build_grocery_list_merges_real_garlic_variants_into_one_group`
+already asserts this). No unit was dropped anywhere: the aggregation
+code only sets a group's unit field once, from whichever row created
+that specific `(canonical, unit)` bucket, and a `unit=None` bucket can
+only exist if real rows genuinely have no unit value. The *only* real
+issue was cosmetic — a bare number with nothing else reads as broken —
+fixed below (item 3), not by touching the grouping logic.
+
+**Not a bug — a copy-paste artifact, not name concatenation.** The
+reported "4 tbsp Coconut oil Cooking oil" (framed as two ingredient names
+joined into one label) was, on precise re-parsing against the actual
+`st.write()` call sequence in `pages/6_Grocery_List.py`, two entirely
+separate, correctly-distinct canonical groups ("Coconut oil" and "Cooking
+oil" — confirmed directly that `canonicalize_ingredient_name()` does not
+merge them) rendered adjacently. There is no code path anywhere that
+concatenates two different canonical names into one label — a group's
+`name` is set once and never touched again. A browser "select all → copy"
+of the rendered page reliably drops bullet/bold markers and sometimes the
+visual line break between adjacent block-level elements, which is almost
+certainly what produced the appearance of concatenation in the pasted
+plain text. Recorded explicitly so a superficially-similar report later
+isn't re-investigated as a grouping bug before checking this first.
+
+**Real bug — unit-string variants weren't recognized as the same unit.**
+Confirmed by direct code inspection (`unit_key` was a bare
+`.strip().lower()` — a literal string comparison) and reproduced locally
+(two recipes calling for ginger as `"2 tbsp"` and `"2 tablespoons"`
+showed as two separate lines, matching the real reported `Ginger` case
+exactly). `normalize_unit()` (`services/ingredient_canonicalization.py`)
+maps known equivalent spellings to one canonical abbreviation
+(tablespoon(s)→tbsp, teaspoon(s)→tsp, gram(s)→g, and similar) — not a
+conversion table; `tbsp` and `tsp` remain permanently distinct, same
+"don't attempt cross-unit conversion" boundary the grouping logic already
+had for ingredient quantities. Applied both to the grouping key and to
+the displayed unit, so a merged group always shows one consistent
+spelling rather than whichever row happened to be seen first.
+
+**Noise-word/phrase additions — three real, distinct gaps found in the
+real pasted list, not hypothesized:**
+- **`"divided"`** — `Cornstarch` (plain) and `Cornstarch divided` didn't
+  merge. Direct addition, same shape as existing noise words.
+- **`"to garnish"`** — `Sesame seeds to garnish` didn't merge with a
+  plain "sesame seeds" line. Direct addition, same shape as the
+  already-handled `"to serve"`/`"to taste"` phrases.
+- **`"and"`** — `Salt and pepper` and the literal `Salt pepper` line
+  (both present in the real reported list) are now recognized as the
+  same canonical identity. Confirmed by test that plain `Salt` still
+  stays distinct from both — a compound "salt and pepper" is genuinely a
+  different shopping item from salt alone, and stripping `"and"` doesn't
+  change that; it only reconciles two different *spellings* of the same
+  compound.
+
+**Explicitly not touched — leaked-field artifacts, confirmed out of
+scope, not silently ignored.** `"0.5 A green pepper"` (the article "a"
+apparently landed in the `unit` field), `"450 Grams firm tofu"` (a
+spelled-out unit word landed in the `name` field instead of `unit`), and
+`"2 Heaped tsp coriander"`/`"2 Heaped tsp turmeric"` (same pattern) are
+real, observed phrasing gaps — but they're extraction bugs (the wrong
+raw field holds the wrong content), not name-phrasing variety a
+canonicalizer can safely reconcile. Same scope boundary as the original
+canonicalization decision ("not further improving extraction coverage
+itself").
+
+**Bare/unitless quantity display fixed with an explicit placeholder, not
+a data change.** `NO_VALUE_DISPLAY = "—"` in `services/grocery_list.py`,
+shown for both "no unit on this line" and "not scaled" — replacing a
+bare number with nothing else, and replacing the previous italic caption
+text for "not scaled" with a plain cell value, since the list is now a
+table (see below) rather than a bulleted list.
+
+**Grocery list rendered as a table, not a bulleted list.** `st.dataframe`
+needed zero new dependencies — pandas is already an installed transitive
+dependency of Streamlit itself, and nothing in this app's own code
+imports it directly, so `requirements.txt` is untouched.
+`grocery_list_table_rows()` flattens `build_grocery_list()`'s
+category → GroceryItem → GroceryUnitLine structure into one row per
+(category, ingredient, quantity, unit) — a multi-line group repeats its
+ingredient name across rows (`st.dataframe` has no cell-merging), which
+is the standard, unambiguous way any real spreadsheet/table already
+represents this. Sequenced after the unit-normalization and noise-word
+fixes landed, not before — building a table on top of still-duplicated
+data would have just made the duplication more visible in a new format
+rather than fixing it.
+
+**CSV export, not `.xlsx` — confirmed the reasoning holds, not defaulted
+to `openpyxl` for its own sake.** A plain CSV already opens correctly in
+Excel with zero added dependency — same "avoid a new dependency unless
+there's a concrete reason" precedent as the original SQLite-file backup
+decision, and the same reasoning that made `boto3` a deliberate,
+justified *exception* for R2 (real request-signing risk) rather than a
+default choice. This is a flat ingredient list — no multi-sheet
+structure, no cell formatting, no multiple related tables — so there's
+no concrete capability gap `openpyxl`/`.xlsx` would close that CSV
+doesn't already cover. `grocery_list_csv()` reuses the exact same
+`grocery_list_table_rows()` output the on-page table renders — one row
+shape, two presentations, so they can't drift from each other. The
+downloaded file is encoded `utf-8-sig` (a UTF-8 byte-order mark) rather
+than plain UTF-8, specifically because the new "—" placeholder is
+non-ASCII and Excel on Windows is known to misrender a BOM-less UTF-8
+CSV containing non-ASCII characters as a legacy codepage instead —
+confirmed this is a real, standard gotcha worth guarding against
+proactively rather than shipping mojibake the first time someone opens
+the download in Excel.
+
+## 2026-09-03 — Rotation avoidance vs. overlap: multi-week stability confirmed, but not for the assumed reason
+
+Investigated whether overlap-aware generation compounds recipe
+repetition over consecutive weeks faster than rotation avoidance can
+counteract — the earlier overlap investigation's numbers were single-week
+snapshots with no real cook-history feedback between trials.
+
+**Method, not just the conclusion.** 100 independent trials of 10
+consecutive simulated weeks each (7,000 real day-picks), against the
+real recipe pool copied faithfully into an isolated schema, with real
+`cook_history` rows written via `finalize_plan()` between each simulated
+week — not independent single-week draws. Confirmed a real methodology
+trap before trusting any result: `generate_week_plan()`'s rotation math
+uses `dt.date.today()` (real wall-clock time), not the simulated week's
+date — running "consecutive" weeks without patching `today` to advance
+in lockstep with the simulated calendar would have made every recorded
+cook date look like it happened in the future relative to a frozen
+`today`, silently invalidating the rotation comparison for the whole
+run. Patched via a `datetime.date` subclass swapped in per simulated
+week, confirmed the swap doesn't disturb any other real date arithmetic
+in the module.
+
+**Result: stable, no drift, no compounding — confirmed with real
+numbers.** Cluster recipes (lasagne/stroganoff/shepherd's pie/pasta/
+risotto/chicken curry) averaged 12.37%/recipe pick share across the full
+run; the two genuinely distinctive recipes (Thai green curry, chicken
+fajitas) averaged 9.07%/recipe — close to, not collapsing away from, the
+12.5% neutral baseline for 1-of-8 usable recipes. Per-week-position
+breakdown (week 1 through week 10) shows no trend in either direction —
+the distinctive pair never dropped below 6.9% in any single week, so no
+"long drought" pattern either.
+
+**The more important finding: a counterfactual, not just an
+observation.** Re-ran the identical simulation with
+`ROTATION_PENALTY_WEIGHT` patched to `1.0` (rotation avoidance fully
+disabled) specifically to isolate *why* it's stable, not just confirm
+that it is. The numbers came back nearly identical to the rotation-
+enabled run. **The stability is not primarily coming from the 21-day
+rotation window** — it's a structural consequence of the no-repeat-
+within-week rule combined with the current pool being barely larger than
+a week (8 usable, non-quick-fallback recipes for 7 slots): almost every
+recipe *must* be used almost every week just to fill the plan, which
+already bounds how far the distribution can drift regardless of rotation
+history.
+
+**No fix implemented — confirmed nothing needs fixing, but recording the
+corrected mechanism, not just the outcome.** The thing actually asked
+about (does overlap-driven cluster dominance compound over consecutive
+real weeks) genuinely doesn't happen, confirmed with real simulation
+against the real pool. But recording "rotation avoidance holds up as the
+escape valve" would have written an assumption into this log as a
+confirmed guarantee when the counterfactual shows the escape valve
+currently doing the work is pool size, not the rotation window. Same
+"value grows with pool size" caveat the overlap investigation itself
+already flagged, now extended to rotation avoidance specifically:
+revisit this once the recipe pool grows large enough that no-repeat-
+within-week stops forcing near-universal weekly coverage on its own —
+that's the point at which rotation avoidance's independent contribution
+(if any) would actually become visible and worth re-measuring.

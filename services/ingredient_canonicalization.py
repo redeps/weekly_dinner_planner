@@ -43,7 +43,17 @@ handful basil leaves torn" — both basil, no shared word survives
 stripping); singular/plural ("carrot" vs. "carrots" — no stemming
 attempted, since a stemmer risks wrongly collapsing unrelated short
 words); and compound lines naming two ingredients in one string ("salt
-and pepper") — not split, none observed in the current corpus.
+and pepper") — not split, though stripping "and" as a noise word (see
+below) does at least merge that phrasing with an already-compounded
+"salt pepper" line, without ever merging either into plain "salt" alone.
+
+Also deliberately not attempted here: leaked-field artifacts where
+extraction put the wrong thing in the wrong column (a stray article word
+like "a" landing in the `unit` field, or a spelled-out unit word like
+"Grams" landing in the `name` field instead of `unit`). These are
+extraction bugs, not name-phrasing variety — out of this module's scope
+for the same reason quantity/unit extraction itself is out of scope; see
+docs/DECISIONS.md.
 """
 
 import re
@@ -85,7 +95,7 @@ _NOISE_PHRASES: tuple[str, ...] = (
     "stems removed", "roughly torn", "such as arborio",
     "or vegetarian alternative", "to serve", "to taste", "plus extra",
     "see below", "zest only", "juiced", "at an angle",
-    "peeled and thinly sliced", "skinned, de-boned",
+    "peeled and thinly sliced", "skinned, de-boned", "to garnish",
     # Norwegian — unvalidated
     "finhakket", "grovhakket",
 )
@@ -96,9 +106,9 @@ _NOISE_WORDS: frozenset[str] = frozenset({
     "minced", "fresh", "freshly", "dried", "ground", "large", "small",
     "medium", "torn", "peeled", "boneless", "skinless", "thinly", "halved",
     "quartered", "de-boned", "deboned", "skinned", "bruised", "such", "as",
-    "or", "of", "clove", "cloves", "extra", "optional", "grana", "padano",
-    "pack", "can", "cans", "handful", "bunch", "stalk", "stalks",
-    "rashers", "stick",
+    "or", "and", "of", "clove", "cloves", "extra", "optional", "grana",
+    "padano", "pack", "can", "cans", "handful", "bunch", "stalk", "stalks",
+    "rashers", "stick", "divided",
     # Norwegian — unvalidated
     "hakket", "presset", "knust", "revet", "skivet", "fersk", "ferske",
     "tørket", "stor", "store", "liten", "lita", "små",
@@ -125,6 +135,37 @@ _ALIASES: dict[str, str] = {
 }
 
 _WORD_RE = re.compile(r"[a-zà-ÿ']+")
+
+# Unit spellings that are the exact same unit written differently — not a
+# conversion table (tbsp and tsp stay permanently distinct; there's real
+# conversion risk this project deliberately doesn't take on, see
+# docs/DECISIONS.md). Canonical abbreviation on the right is arbitrary,
+# not a claim it's the "correct" spelling.
+_UNIT_SYNONYMS: dict[str, str] = {
+    "tablespoon": "tbsp", "tablespoons": "tbsp",
+    "teaspoon": "tsp", "teaspoons": "tsp",
+    "gram": "g", "grams": "g",
+    "kilogram": "kg", "kilograms": "kg",
+    "milliliter": "ml", "milliliters": "ml", "millilitre": "ml", "millilitres": "ml",
+    "liter": "l", "liters": "l", "litre": "l", "litres": "l",
+    "pound": "lb", "pounds": "lb",
+    "ounce": "oz", "ounces": "oz",
+    "cups": "cup",
+    "cloves": "clove",
+}
+
+
+def normalize_unit(raw_unit: str) -> str:
+    """A canonical spelling for a unit string, so "tbsp" and
+    "tablespoons" (the same unit written two ways) group together instead
+    of showing as separate lines — never a conversion between genuinely
+    different units (tbsp/tsp stay distinct). `None`/empty input passes
+    through as `""`; callers already distinguish "no unit" from "has a
+    unit" via truthiness, same as before this existed."""
+    if not raw_unit or not raw_unit.strip():
+        return ""
+    normalized = raw_unit.strip().lower()
+    return _UNIT_SYNONYMS.get(normalized, normalized)
 
 
 def canonicalize_ingredient_name(raw_name: str) -> str:

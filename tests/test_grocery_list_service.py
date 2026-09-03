@@ -106,7 +106,10 @@ def test_build_grocery_list_keeps_different_units_as_separate_lines_in_one_group
 
     assert [item.name for item in result["pantry"]] == ["Flour"]
     by_unit = {line.unit: line.quantity for line in result["pantry"][0].lines}
-    assert by_unit == {"g": 200, "cups": 2}
+    # "cups" normalizes to "cup" (services/ingredient_canonicalization.py's
+    # normalize_unit) -- still a genuinely different unit from "g", so it
+    # stays a separate line, just spelled the canonical way.
+    assert by_unit == {"g": 200, "cup": 2}
 
 
 def test_build_grocery_list_doubles_when_recipe_repeats_within_week(conn):
@@ -133,10 +136,10 @@ def test_build_grocery_list_normalizes_name_and_unit_casing_and_whitespace(conn)
 
     assert len(result["pantry"]) == 1
     assert result["pantry"][0].lines[0].quantity == 250
-    # display name is the canonical name, capitalized; unit comes from
-    # the first entry seen for that (canonical, unit) pair
+    # display name is the canonical name, capitalized; unit is normalized
+    # (lowercased) regardless of how any individual row spelled it
     assert result["pantry"][0].name == "Flour"
-    assert result["pantry"][0].lines[0].unit == "G"
+    assert result["pantry"][0].lines[0].unit == "g"
 
 
 def test_build_grocery_list_handles_missing_quantity_without_duplicating(conn):
@@ -396,3 +399,120 @@ def test_build_grocery_list_unicode_fraction_beef_stock_merges_correctly(conn):
     stock_items = [item for item in result["pantry"] if item.name == "Beef stock"]
     assert len(stock_items) == 1
     assert stock_items[0].lines[0].quantity == 600
+
+
+# --- Unit-string normalization (real examples from the reported output) ---
+
+
+def test_build_grocery_list_merges_tbsp_and_tablespoons_variants(conn):
+    """Real example: Ginger showed as '2 tbsp' and '2 teaspoons' -- two
+    separate lines despite tbsp/tablespoons being the same unit. Uses
+    tbsp/tablespoons specifically (the pair actually observed for
+    Ginger's tbsp side) to confirm the merge end-to-end through
+    build_grocery_list, not just the pure normalize_unit() function."""
+    recipe_a = make_recipe(
+        conn, "A", [{"name": "ginger", "quantity": 2, "unit": "tbsp", "store_category": "produce"}]
+    )
+    recipe_b = make_recipe(
+        conn, "B", [{"name": "ginger", "quantity": 1, "unit": "tablespoons", "store_category": "produce"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe_a), ("tuesday", recipe_b)])
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+
+    ginger_items = [item for item in result["produce"] if item.name == "Ginger"]
+    assert len(ginger_items) == 1
+    assert len(ginger_items[0].lines) == 1, "tbsp and tablespoons must merge into a single line"
+    assert ginger_items[0].lines[0].quantity == 3
+    assert ginger_items[0].lines[0].unit == "tbsp"
+
+
+def test_build_grocery_list_cornstarch_name_merges_but_units_stay_separate(conn):
+    """Real example: '18 g Cornstarch' and '2 tablespoons Cornstarch
+    divided' didn't merge at all -- two compounded issues. 'divided' now
+    merges the *name* into one canonical group, but g and tablespoons are
+    genuinely different units (no conversion attempted), so they must
+    still show as two separate lines within that one group, not summed
+    into one number."""
+    recipe_a = make_recipe(
+        conn, "A", [{"name": "Cornstarch", "quantity": 18, "unit": "g", "store_category": "pantry"}]
+    )
+    recipe_b = make_recipe(
+        conn, "B", [{"name": "Cornstarch divided", "quantity": 2, "unit": "tablespoons", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe_a), ("tuesday", recipe_b)])
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+
+    cornstarch_items = [item for item in result["pantry"] if item.name == "Cornstarch"]
+    assert len(cornstarch_items) == 1, "'divided' must be stripped so both rows share one heading"
+    by_unit = {line.unit: line.quantity for line in cornstarch_items[0].lines}
+    assert by_unit == {"g": 18, "tbsp": 2}
+
+
+# --- grocery_list_table_rows / grocery_list_csv ---
+
+
+def test_grocery_list_table_rows_flattens_multi_line_group(conn):
+    """A multi-line canonical group (Butter: one unscaled line, one
+    quantified line -- matching the real reported 'Butter' case) must
+    produce one table row per line, repeating the ingredient name, with
+    explicit '—' placeholders rather than a bare number or blank cell."""
+    recipe_a = make_recipe(
+        conn, "A", [{"name": "butter", "store_category": "dairy"}]  # no quantity -> unscaled
+    )
+    recipe_b = make_recipe(
+        conn, "B", [{"name": "butter", "quantity": 2, "unit": "tbsp", "store_category": "dairy"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe_a), ("tuesday", recipe_b)])
+
+    grocery_list = grocery_service.build_grocery_list(conn, week_plan_id)
+    rows = grocery_service.grocery_list_table_rows(grocery_list)
+
+    butter_rows = [r for r in rows if r.ingredient == "Butter"]
+    assert len(butter_rows) == 2
+    assert all(r.category == "Dairy" for r in butter_rows)
+    by_quantity = {r.quantity for r in butter_rows}
+    assert by_quantity == {grocery_service.NO_VALUE_DISPLAY, "2"}
+    unscaled_row = next(r for r in butter_rows if r.quantity == grocery_service.NO_VALUE_DISPLAY)
+    assert unscaled_row.unit == grocery_service.NO_VALUE_DISPLAY  # no unit on that line either
+    quantified_row = next(r for r in butter_rows if r.quantity == "2")
+    assert quantified_row.unit == "tbsp"
+
+
+def test_grocery_list_table_rows_single_line_group_one_row(conn):
+    recipe = make_recipe(
+        conn, "Recipe", [{"name": "flour", "quantity": 200, "unit": "g", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe)])
+
+    grocery_list = grocery_service.build_grocery_list(conn, week_plan_id)
+    rows = grocery_service.grocery_list_table_rows(grocery_list)
+
+    assert rows == [
+        grocery_service.GroceryTableRow(
+            category="Pantry", ingredient="Flour", quantity="200", unit="g"
+        )
+    ]
+
+
+def test_grocery_list_csv_produces_correct_header_and_rows(conn):
+    recipe = make_recipe(
+        conn, "Recipe", [{"name": "flour", "quantity": 200, "unit": "g", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe)])
+
+    grocery_list = grocery_service.build_grocery_list(conn, week_plan_id)
+    csv_text = grocery_service.grocery_list_csv(grocery_list)
+
+    lines = csv_text.strip().splitlines()
+    assert lines[0] == "Category,Ingredient,Quantity,Unit"
+    assert lines[1] == "Pantry,Flour,200,g"
+    assert len(lines) == 2
+
+
+def test_grocery_list_csv_empty_list_produces_header_only(conn):
+    grocery_list = grocery_service.build_grocery_list(conn, 999)  # no such week plan -> {}
+    csv_text = grocery_service.grocery_list_csv(grocery_list)
+    lines = csv_text.strip().splitlines()
+    assert lines == ["Category,Ingredient,Quantity,Unit"]
