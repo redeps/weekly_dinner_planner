@@ -152,11 +152,12 @@ def list_recipes(
     search: Optional[str] = None,
     season: Optional[str] = None,
     quick_fallback_only: bool = False,
+    special_occasion_only: bool = False,
     include_inactive: bool = False,
 ) -> list[Recipe]:
-    """List recipes, optionally filtered by name search, season, or
-    quick-fallback status. Inactive (soft-deleted) recipes are excluded by
-    default."""
+    """List recipes, optionally filtered by name search, season,
+    quick-fallback, or special-occasion status. Inactive (soft-deleted)
+    recipes are excluded by default."""
     query = "SELECT * FROM recipes WHERE 1=1"
     params: list = []
     if not include_inactive:
@@ -169,6 +170,8 @@ def list_recipes(
         params.append(season)
     if quick_fallback_only:
         query += " AND is_quick_fallback = 1"
+    if special_occasion_only:
+        query += " AND is_special_occasion = 1"
     query += " ORDER BY LOWER(name)"
     rows = _dict_cursor(conn).execute(query, params).fetchall()
     return [_row_to_recipe(row) for row in rows]

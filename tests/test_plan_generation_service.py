@@ -464,6 +464,88 @@ def test_swap_day_recipe_can_select_a_special_occasion_recipe(conn):
     assert result.is_special_occasion is True
 
 
+# --- generate_week_plan: direct assignment via CalendarDay.assigned_recipe_id ---
+
+
+def test_generate_week_plan_places_assigned_recipe_with_no_scoring(conn):
+    for i in range(8):
+        make_recipe(conn, name=f"Regular {i}")
+    special = make_recipe(conn, name="Holiday Roast", is_special_occasion=True)
+
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["monday"].assigned_recipe_id = special.id
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(0)
+    )
+    days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+    assert days["monday"].recipe_id == special.id
+
+
+def test_generate_week_plan_falls_back_when_assigned_recipe_is_missing(conn):
+    make_recipe(conn, name="Regular")
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["monday"].assigned_recipe_id = 999999  # no such recipe
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(0)
+    )
+    days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+    assert days["monday"].recipe_id is not None  # fell back to normal scoring, not a crash
+
+
+def test_generate_week_plan_falls_back_when_assigned_recipe_is_deactivated(conn):
+    make_recipe(conn, name="Regular")
+    special = make_recipe(conn, name="Holiday Roast", is_special_occasion=True)
+    recipe_service.deactivate_recipe(conn, special.id)
+
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["monday"].assigned_recipe_id = special.id
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(0)
+    )
+    days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+    assert days["monday"].recipe_id != special.id
+
+
+def test_generate_week_plan_assignment_does_not_consume_a_slot_or_force_repeat(conn):
+    """A pre-assigned special-occasion recipe must not be treated as part
+    of the normal pool: exactly 7 regular recipes exist (the minimum
+    needed for a repeat-free week on their own) plus one special-occasion
+    recipe assigned to Monday. Monday's assignment must not shrink the
+    pool available to the other 6 (auto-generated) days -- if it wrongly
+    did, those 6 days would still have exactly enough regular recipes (7)
+    to stay repeat-free, so this wouldn't even catch a bug by itself;
+    what it does confirm is the pool used for the 6 auto-generated days
+    is the full, undiminished 7 regular recipes (all recipe_ids are drawn
+    from `regulars`, and Monday's own id -- the special-occasion one --
+    is never among them, confirming it was never added to the pool
+    `used_recipe_ids` draws exclusions from)."""
+    regulars = [make_recipe(conn, name=f"Regular {i}") for i in range(7)]
+    special = make_recipe(conn, name="Holiday Roast", is_special_occasion=True)
+
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["monday"].assigned_recipe_id = special.id
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(0)
+    )
+    days = plan_service.list_plan_days(conn, week_plan_id)
+    recipe_ids = [d.recipe_id for d in days]
+    assert len(recipe_ids) == 7
+    assert len(set(recipe_ids)) == 7, "no repeat among the 6 auto-generated days"
+    monday = next(d for d in days if d.day_of_week == "monday")
+    assert monday.recipe_id == special.id
+    other_ids = {d.recipe_id for d in days if d.day_of_week != "monday"}
+    assert len(other_ids) == 6
+    assert other_ids <= {r.id for r in regulars}, "auto-generated days drew only from the regular pool"
+
+
 def test_generate_week_plan_allows_repeats_when_recipe_pool_too_small(conn):
     make_recipe(conn, name="Only One")
     week_plan_id = plan_service.generate_week_plan(

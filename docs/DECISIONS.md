@@ -1704,3 +1704,114 @@ still takes precedence and scales normally — someone deliberately said
 how many people that day is actually for, which is a stronger, more
 specific signal than the recipe's own default. Silence (no override) is
 read as "trust the recipe," not as "assume the app-wide default."
+
+**Direct assignment on the Weekly Calendar screen — the primary path,
+not swap.** Relying on "generate, then keep swapping until the holiday
+recipe happens to come up" is a bad primary UX for something a household
+already knows in advance (it's Thursday, it's Thanksgiving). Added a
+third week-gated section on `pages/4_Weekly_Calendar.py`, mirroring the
+household-size override's exact shape (yes/no → multiselect of days →
+per-day widget, deselecting a day clears its assignment, rebuilt from
+scratch every render) — "Any holiday or special-occasion days this
+week?" → which day(s) → a recipe picker per day, scoped to
+`list_recipes(conn, special_occasion_only=True)` (new filter, symmetric
+with the existing `quick_fallback_only`). Hidden entirely (no section,
+no dead-end picker) when zero `is_special_occasion` recipes exist,
+matching Milestone 12's empty-state pattern. Swap remains available as
+the secondary way to change your mind about a specific day afterward —
+untouched, still not filtered on the flag.
+
+**One deliberate deviation from "mirror exactly":** the household-size
+picker always has a sane numeric default (`existing_override or
+default_household_size`); a recipe picker has no non-arbitrary default; the
+per-day `st.selectbox` includes a `None` "— choose a recipe —" placeholder
+rather than silently defaulting to whichever special-occasion recipe
+sorts first. A day left on the placeholder simply falls back to normal
+auto-generation for that day — no validation block on Generate.
+
+**`CalendarDay.assigned_recipe_id`, carried into `generate_week_plan()`
+the same way `household_size_override` already is** (confirmed by
+reading the function, not assumed from the household-size precedent
+alone: `CalendarDay` objects are read field-by-field per day when
+building each `plan_days` INSERT). A day with `assigned_recipe_id` set
+skips `choose_recipe()` entirely — no candidate pool, no scoring, the
+recipe is placed directly. If the assigned recipe is missing or has been
+deactivated by generation time (a narrow race — deleted in another tab
+between picking it and clicking Generate), it falls back to normal
+scoring for that day rather than raising a foreign-key violation into
+the user's face — matches this app's existing graceful-degradation style
+(e.g. `swap_day_recipe`'s broken-filter handling).
+
+**No new `plan_days` column for "how was this chosen."** Nothing
+downstream (scaling, display, cook history) needs to know whether a
+day's recipe was auto-generated, swapped, or directly assigned — matches
+the existing precedent exactly: a swapped-in recipe is already
+indistinguishable from an originally-generated one, no "was swapped"
+flag exists either.
+
+**No-repeat interaction — structurally impossible to violate, traced
+through rather than asserted.** `recipes` (the pool `choose_recipe`
+draws from) is built once, before the day loop, already excluding every
+`is_special_occasion` recipe. Every assignable recipe is, by
+construction (the picker only offers `is_special_occasion=True`
+recipes), never a member of `recipes` in the first place — so whether or
+not an assigned recipe's id gets added to `used_recipe_ids` has zero
+effect on any other day's candidate pool. Chose not to add it: pre-
+assignment bypasses the scoring/pool machinery entirely and never
+touches `used_recipe_ids`, which is more honest about what's actually
+happening than adding a no-op entry would be. Confirmed by test with 7
+regular recipes (the exact minimum for a repeat-free week on their own)
+plus one assigned special-occasion recipe: all 7 days filled, no repeat,
+and the 6 auto-generated days draw only from the 7-recipe regular pool —
+undiminished by the assignment. One further consequence, deliberately
+not blocked: a household can assign the *same* special-occasion recipe
+to two different days (e.g. leftovers on both Christmas and Boxing Day)
+— no artificial same-week dedup applies to direct assignments, consistent
+with swap already not blocking repeated manual picks either.
+
+**Session-state persistence bug, found and fixed alongside the picker
+above rather than as a separate pass — the two turned out to share a
+root cause.** Investigated a report that a household-size override, once
+set for a specific day, disappeared after navigating to another page and
+back. Reproduced directly via `AppTest` with real `st.switch_page()`
+navigation (not a hand-copied `session_state` dict between separately-
+constructed `AppTest` instances — tried that first, and it made the bug
+look already-fixed, since manually copying the whole dict doesn't
+reproduce Streamlit's actual widget-state lifecycle across a real
+multipage session; the discrepancy was the first sign the naive
+approach couldn't be trusted here).
+
+**Root cause, found by inspecting session state at each step, not
+guessed.** `cal_busy_{day}`, `cal_time_{day}`, and
+`default_household_size_input` all survive navigation intact.
+`hosting_extra_this_week` does not — it silently resets to `"No"`.
+`household_override_days` and `cal_household_size_{day}` vanish from
+session state entirely. The busy/time widgets survive because their
+`value=` is computed fresh from the durable `st.session_state
+["weekly_calendar"]` list on every render, so even when a widget's own
+prior state doesn't carry over, the freshly-created instance self-heals
+from the durable source. `hosting_extra_this_week`'s `st.radio(...)` had
+no computed default at all — no `index=` — so a freshly-recreated
+instance falls back to Streamlit's hardcoded index 0. Since the whole
+`if hosting_this_week == "Yes":` block is then skipped, the section's
+own unconditional end-of-script rebuild
+(`household_size_override=household_override_by_day.get(day_name)`)
+overwrites the still-correct value sitting in the durable list with
+`None` — not because Streamlit lost the *data*, but because the page's
+own code never re-consulted the durable list once its gate defaulted
+shut. Confirmed the fix directly against the same repro before proposing
+it: computing the radio's `index=` and the multiselect's `default=` from
+`calendar_by_day` (whether any/which days currently have an override)
+makes the override survive navigation correctly.
+
+**Scope: one shared fix, not three.** Busy/dinner-time was never
+affected (unconditionally rendered, already self-healing). Household-
+size override needed the fix. The special-occasion picker above — same
+yes/no → multiselect → per-day-widget shape — would have had the
+identical bug if built the same way as the original household-size
+code; built it with the computed `index=`/`default=` pattern from the
+start instead of shipping it broken and patching later. Both gated
+sections now follow the same rule stated once in the page's own module
+docstring: every gate's default is derived from the durable
+`weekly_calendar` list, never from the gating widget's own persisted
+state alone.

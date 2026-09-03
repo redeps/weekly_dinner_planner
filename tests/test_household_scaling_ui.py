@@ -14,7 +14,9 @@ from streamlit.testing.v1 import AppTest
 import database
 
 REPO = Path(__file__).parent.parent
+HOME_PAGE = str(REPO / "app.py")
 WEEKLY_CALENDAR_PAGE = str(REPO / "pages" / "4_Weekly_Calendar.py")
+WEEK_PLAN_PAGE = str(REPO / "pages" / "5_Week_Plan.py")
 
 
 @pytest.fixture
@@ -96,3 +98,37 @@ def test_changing_default_household_size_persists_via_settings_service(isolated_
     conn = database.get_connection()
     assert get_default_household_size(conn) == 6
     conn.close()
+
+
+# --- Regression: override survives navigating away and back ---
+# (docs/DECISIONS.md -- the yes/no gate's radio had no computed `index=`,
+# so a fresh widget instance after navigation defaulted to "No" and the
+# page's own end-of-script rebuild then overwrote the still-correct
+# override with None. Uses real st.switch_page() navigation, not a
+# hand-copied session_state dict, since the latter doesn't reproduce
+# Streamlit's actual widget-state lifecycle across pages -- confirmed
+# during investigation that a naive copy made the bug look already-fixed
+# when it wasn't.)
+
+
+def test_household_override_survives_navigating_away_and_back(isolated_db):
+    at = AppTest.from_file(HOME_PAGE)
+    at.session_state["authenticated"] = True
+    at = at.run()
+    at = at.switch_page("pages/4_Weekly_Calendar.py").run()
+
+    at.radio(key="hosting_extra_this_week").set_value("Yes")
+    at = at.run()
+    at.multiselect(key="household_override_days").set_value(["wednesday"])
+    at = at.run()
+    at.number_input(key="cal_household_size_wednesday").set_value(9)
+    at = at.run()
+
+    at = at.switch_page("pages/5_Week_Plan.py").run()
+    at = at.switch_page("pages/4_Weekly_Calendar.py").run()
+
+    assert not at.exception
+    wed = next(d for d in at.session_state["weekly_calendar"] if d.day_of_week == "wednesday")
+    assert wed.household_size_override == 9
+    assert at.radio(key="hosting_extra_this_week").value == "Yes"
+    assert at.multiselect(key="household_override_days").value == ["wednesday"]

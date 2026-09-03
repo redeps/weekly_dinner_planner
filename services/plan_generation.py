@@ -19,7 +19,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from models import DAYS_OF_WEEK, CalendarDay, PlanDay, Recipe, WeekPlan
-from services.recipes import list_recipes
+from services.recipes import get_recipe, list_recipes
 
 ROTATION_WINDOW_DAYS = 21  # 3 weeks — see docs/DECISIONS.md
 
@@ -132,8 +132,20 @@ def generate_week_plan(
 
     `is_special_occasion` recipes are hard-excluded from this automatic
     pool entirely (including the small-pool repeat fallback above) — they
-    only ever get assigned to a day deliberately, via swap, never picked
-    for you (see docs/DECISIONS.md).
+    only ever get assigned to a day deliberately, via swap or the Weekly
+    Calendar screen's direct-assignment picker, never picked for you.
+
+    A day whose `CalendarDay.assigned_recipe_id` is set (the direct-
+    assignment picker) skips scoring entirely — the assigned recipe is
+    placed directly, no candidate pool involved. Since that recipe is
+    always `is_special_occasion` (the picker only offers those) and is
+    therefore never a member of `recipes` above, it's structurally
+    impossible for a pre-assignment to consume a slot from the normal
+    pool or affect the no-repeat guarantee for the week's other,
+    auto-generated days (see docs/DECISIONS.md). If the assigned recipe
+    no longer exists or was deactivated by generation time, this falls
+    back to normal scoring for that day rather than failing the whole
+    plan.
     """
     rng = rng or random.Random()
     recipes = [r for r in list_recipes(conn) if not r.is_special_occasion]
@@ -160,18 +172,26 @@ def generate_week_plan(
         for offset, day_name in enumerate(DAYS_OF_WEEK):
             cal_day = calendar_by_day[day_name]
             plan_date = week_start_date + dt.timedelta(days=offset)
-            season = current_season(plan_date)
 
-            available = [r for r in recipes if r.id not in used_recipe_ids] or recipes
-            chosen = choose_recipe(
-                available,
-                season=season,
-                is_busy=cal_day.is_busy,
-                last_cooked_by_recipe=last_cooked_by_recipe,
-                today=today,
-                rng=rng,
-            )
-            used_recipe_ids.add(chosen.id)
+            chosen_id = None
+            if cal_day.assigned_recipe_id is not None:
+                assigned = get_recipe(conn, cal_day.assigned_recipe_id)
+                if assigned is not None and assigned.active:
+                    chosen_id = assigned.id
+
+            if chosen_id is None:
+                season = current_season(plan_date)
+                available = [r for r in recipes if r.id not in used_recipe_ids] or recipes
+                chosen = choose_recipe(
+                    available,
+                    season=season,
+                    is_busy=cal_day.is_busy,
+                    last_cooked_by_recipe=last_cooked_by_recipe,
+                    today=today,
+                    rng=rng,
+                )
+                chosen_id = chosen.id
+                used_recipe_ids.add(chosen_id)
 
             conn.execute(
                 """
@@ -186,7 +206,7 @@ def generate_week_plan(
                     plan_date.isoformat(),
                     int(cal_day.is_busy),
                     cal_day.dinner_ready_time.strftime("%H:%M"),
-                    chosen.id,
+                    chosen_id,
                     cal_day.household_size_override,
                 ),
             )

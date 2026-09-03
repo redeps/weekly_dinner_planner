@@ -109,6 +109,13 @@ def test_list_recipes_filters_quick_fallback_only(conn):
     assert [r.name for r in results] == ["Frozen Pizza"]
 
 
+def test_list_recipes_filters_special_occasion_only(conn):
+    make_recipe(conn, name="Chicken Curry")
+    make_recipe(conn, name="Holiday Roast", is_special_occasion=True)
+    results = recipe_service.list_recipes(conn, special_occasion_only=True)
+    assert [r.name for r in results] == ["Holiday Roast"]
+
+
 def test_list_recipes_ordered_by_name(conn):
     make_recipe(conn, name="Zucchini Bake")
     make_recipe(conn, name="Apple Crumble")

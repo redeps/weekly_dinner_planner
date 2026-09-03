@@ -61,6 +61,7 @@ class CalendarDay:
     is_busy: bool
     dinner_ready_time: dt.time
     household_size_override: Optional[int] = None
+    assigned_recipe_id: Optional[int] = None
 
 
 @dataclass
