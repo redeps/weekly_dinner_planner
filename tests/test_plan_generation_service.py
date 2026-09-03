@@ -3,6 +3,7 @@ Milestone 4 tests: plan generation scoring and generation
 (services/plan_generation.py).
 """
 
+import collections
 import datetime as dt
 import random
 
@@ -11,6 +12,7 @@ import pytest
 import database
 import models
 from models import CalendarDay
+from services import ingredients as ingredient_service
 from services import plan_generation as plan_service
 from services import recipes as recipe_service
 
@@ -764,3 +766,246 @@ def test_swap_day_recipe_ignores_a_filter_that_raises(conn):
         conn, monday.id, rng=random.Random(19), candidate_filter=broken_filter
     )
     assert result is not None
+
+
+# --- ingredient-overlap bonus (docs/DECISIONS.md) ---
+
+
+def test_score_recipe_overlap_bonus_increases_weight(conn):
+    recipe = make_recipe(conn)
+    kwargs = dict(season="all-season", is_busy=False, last_cooked=None, today=dt.date(2026, 8, 31))
+    no_overlap = plan_service.score_recipe(recipe, overlap_count=0, **kwargs)
+    with_overlap = plan_service.score_recipe(recipe, overlap_count=2, **kwargs)
+    assert with_overlap == pytest.approx(
+        no_overlap * (1 + plan_service.INGREDIENT_OVERLAP_BONUS) ** 2
+    )
+
+
+def test_choose_recipe_favors_recipe_sharing_committed_ingredients(conn):
+    overlapping = make_recipe(conn, name="Overlapping")
+    plain = make_recipe(conn, name="Plain")
+    canonical_ingredients_by_recipe = {
+        overlapping.id: frozenset({"parmesan"}),
+        plain.id: frozenset({"salt"}),
+    }
+    committed = frozenset({"parmesan"})
+    rng = random.Random(0)
+    picks = [
+        plan_service.choose_recipe(
+            [overlapping, plain],
+            season="all-season",
+            is_busy=False,
+            last_cooked_by_recipe={},
+            today=dt.date(2026, 8, 31),
+            rng=rng,
+            canonical_ingredients_by_recipe=canonical_ingredients_by_recipe,
+            committed_canonical_ingredients=committed,
+        )
+        for _ in range(200)
+    ]
+    overlapping_count = sum(1 for p in picks if p.id == overlapping.id)
+    plain_count = sum(1 for p in picks if p.id == plain.id)
+    assert overlapping_count > plain_count
+
+
+def test_choose_recipe_defaults_to_no_overlap_bonus_when_not_provided(conn):
+    """Confirms swap_day_recipe's existing call shape (no
+    canonical_ingredients_by_recipe / committed_canonical_ingredients
+    passed) is completely unaffected -- two otherwise-identical recipes
+    stay evenly matched when the new parameters are simply omitted."""
+    a = make_recipe(conn, name="A")
+    b = make_recipe(conn, name="B")
+    rng = random.Random(0)
+    picks = [
+        plan_service.choose_recipe(
+            [a, b],
+            season="all-season",
+            is_busy=False,
+            last_cooked_by_recipe={},
+            today=dt.date(2026, 8, 31),
+            rng=rng,
+        )
+        for _ in range(200)
+    ]
+    a_count = sum(1 for p in picks if p.id == a.id)
+    assert 60 < a_count < 140  # roughly even, no bonus favoring either
+
+
+def test_choose_recipe_empty_ingredient_recipe_never_gets_overlap_bonus(conn):
+    """A recipe with no ingredients (e.g. a quick-fallback recipe) has an
+    empty canonical set, so it can never share anything with the
+    committed set -- confirmed structurally, not assumed, by pitting it
+    against a recipe that genuinely does overlap."""
+    quick = make_recipe(conn, name="Quick")  # no ingredients ever added
+    overlapping = make_recipe(conn, name="Overlapping")
+    canonical_ingredients_by_recipe = {
+        quick.id: frozenset(),
+        overlapping.id: frozenset({"beef stock"}),
+    }
+    committed = frozenset({"beef stock"})
+    rng = random.Random(0)
+    picks = [
+        plan_service.choose_recipe(
+            [quick, overlapping],
+            season="all-season",
+            is_busy=False,
+            last_cooked_by_recipe={},
+            today=dt.date(2026, 8, 31),
+            rng=rng,
+            canonical_ingredients_by_recipe=canonical_ingredients_by_recipe,
+            committed_canonical_ingredients=committed,
+        )
+        for _ in range(200)
+    ]
+    quick_count = sum(1 for p in picks if p.id == quick.id)
+    overlapping_count = sum(1 for p in picks if p.id == overlapping.id)
+    assert overlapping_count > quick_count
+
+
+# --- _staple_canonical_ingredients (dynamic threshold) ---
+
+
+def test_staple_canonical_ingredients_excludes_at_or_above_threshold():
+    canonical_ingredients_by_recipe = {
+        1: frozenset({"garlic", "onion", "parmesan"}),
+        2: frozenset({"garlic", "onion"}),
+        3: frozenset({"garlic", "beef stock"}),
+        4: frozenset({"garlic", "crème fraîche"}),
+    }
+    # garlic: 4/4 = 100%, onion: 2/4 = 50%, others: 1/4 = 25% each
+    staples = plan_service._staple_canonical_ingredients(canonical_ingredients_by_recipe)
+    assert staples == frozenset({"garlic", "onion"})
+    assert "parmesan" not in staples
+    assert "beef stock" not in staples
+    assert "crème fraîche" not in staples
+
+
+def test_staple_canonical_ingredients_ignores_empty_recipes_in_denominator():
+    canonical_ingredients_by_recipe = {
+        1: frozenset({"garlic"}),
+        2: frozenset(),  # e.g. a quick-fallback recipe -- must not dilute the denominator
+        3: frozenset(),
+    }
+    # garlic is in 1 of the 1 non-empty recipe (100%), not 1 of 3 (33%)
+    staples = plan_service._staple_canonical_ingredients(canonical_ingredients_by_recipe)
+    assert staples == frozenset({"garlic"})
+
+
+def test_staple_canonical_ingredients_empty_input_returns_empty():
+    assert plan_service._staple_canonical_ingredients({}) == frozenset()
+    assert plan_service._staple_canonical_ingredients({1: frozenset()}) == frozenset()
+
+
+def test_staple_canonical_ingredients_matches_real_dev_db_staples(conn):
+    """Regression test against the real staples found during
+    investigation: with the real dev-DB-shaped recipe set (garlic/onion
+    common, parmesan/beef stock/crème fraîche rare), the dynamic
+    threshold must land on the same staple set the investigation found
+    (garlic, onion) and must NOT exclude the genuinely distinctive
+    overlap ingredients."""
+    real_shaped = [
+        ("Beef stroganoff", ["beef stock", "butter", "crème fraîche", "garlic", "onion"]),
+        ("Chicken fajitas", ["cherry tomatoes", "garlic", "olive oil", "red onion"]),
+        ("Creamy mushroom pasta", ["butter", "garlic", "olive oil", "onion", "parmesan"]),
+        ("Easy chicken curry", ["garlic", "onion", "tomatoes"]),
+        ("Easy classic lasagne", ["garlic", "olive oil", "onion", "parmesan", "tomatoes"]),
+        ("Mushroom risotto", ["butter", "garlic", "olive oil", "onion", "parmesan"]),
+        ("No-fuss shepherd's pie", ["beef stock", "butter", "onion"]),
+        ("Thai green curry", ["garlic"]),
+    ]
+    canonical_ingredients_by_recipe = {}
+    for name, ingredients in real_shaped:
+        r = make_recipe(conn, name=name)
+        ingredient_service.replace_recipe_ingredients(
+            conn, r.id, [{"name": ing, "store_category": "pantry"} for ing in ingredients]
+        )
+        canonical_ingredients_by_recipe[r.id] = frozenset(ingredients)
+
+    staples = plan_service._staple_canonical_ingredients(canonical_ingredients_by_recipe)
+    # Matches the investigation's own hardcoded-proxy staple list exactly,
+    # confirmed here as the *dynamic* threshold's real output against
+    # this real-shaped 8-recipe pool (garlic 7/8, onion 6/8, olive oil
+    # 4/8, butter 4/8 -- all >= the 50% threshold).
+    assert staples == frozenset({"garlic", "onion", "olive oil", "butter"})
+    for distinctive in ("parmesan", "beef stock", "crème fraîche", "tomatoes"):
+        assert distinctive not in staples
+
+
+# --- generate_week_plan: overlap-aware, integration level ---
+
+
+def test_generate_week_plan_never_forces_repeat_or_unfilled_day_with_overlap_bonus_active(conn):
+    """Regression test with real overlapping ingredient data (so the
+    overlap bonus is genuinely active, not trivially zero) -- a full
+    7-day week must still never repeat a recipe or leave a day unfilled,
+    even at exactly the 7-recipe no-repeat boundary."""
+    shared_groups = [
+        ["parmesan"], ["parmesan"], ["parmesan"],
+        ["beef stock"], ["beef stock"],
+        ["unique-a"],
+        ["unique-b"],
+    ]
+    for i, ingredients in enumerate(shared_groups):
+        r = make_recipe(conn, name=f"Recipe {i}")
+        ingredient_service.replace_recipe_ingredients(
+            conn, r.id, [{"name": ing, "store_category": "pantry"} for ing in ingredients]
+        )
+
+    for seed in range(20):
+        week_plan_id = plan_service.generate_week_plan(
+            conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(seed)
+        )
+        days = plan_service.list_plan_days(conn, week_plan_id)
+        assert len(days) == 7
+        assert all(d.recipe_id is not None for d in days)
+        assert len({d.recipe_id for d in days}) == 7, f"repeat occurred at seed={seed}"
+
+
+def test_generate_week_plan_pre_assigned_special_occasion_day_excluded_from_overlap(conn):
+    """Regression test: a pre-assigned special-occasion day's ingredients
+    must never enter the overlap accumulator. Monday is pre-assigned a
+    special-occasion recipe sharing "parmesan" with one of the 7
+    auto-generation candidates -- if that leaked into the accumulator,
+    the matching candidate would be picked noticeably more than the other
+    6 on Tuesday (the first auto-generated day, with no other prior
+    context). Confirmed via simulation, not a single deterministic call,
+    matching this project's existing standard for weighted-random
+    behavior."""
+    special = make_recipe(conn, name="Special", is_special_occasion=True)
+    ingredient_service.replace_recipe_ingredients(
+        conn, special.id, [{"name": "parmesan", "store_category": "dairy"}]
+    )
+
+    matching = make_recipe(conn, name="Matching")
+    ingredient_service.replace_recipe_ingredients(
+        conn, matching.id, [{"name": "parmesan", "store_category": "dairy"}]
+    )
+    others = []
+    for i in range(6):
+        r = make_recipe(conn, name=f"Other {i}")
+        ingredient_service.replace_recipe_ingredients(
+            conn, r.id, [{"name": f"unique-{i}", "store_category": "pantry"}]
+        )
+        others.append(r)
+
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["monday"].assigned_recipe_id = special.id
+
+    candidates = [matching.id] + [r.id for r in others]
+    tuesday_picks = collections.Counter()
+    n_trials = 300
+    for seed in range(n_trials):
+        week_plan_id = plan_service.generate_week_plan(
+            conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(seed)
+        )
+        days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+        tuesday_picks[days["tuesday"].recipe_id] += 1
+
+    assert set(tuesday_picks.keys()) <= set(candidates)
+    counts = [tuesday_picks[cid] for cid in candidates]
+    expected_even_share = n_trials / len(candidates)
+    # If Monday's pre-assignment had wrongly fed the accumulator,
+    # `matching` would be picked roughly 2x as often as the other 6 --
+    # clearly distinguishable from the even ~1/7 share expected here.
+    assert max(counts) < 2 * expected_even_share

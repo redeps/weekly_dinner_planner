@@ -11,6 +11,7 @@ Design choices (rotation window, season mapping, busy-day scope, and why
 docs/DECISIONS.md.
 """
 
+import collections
 import datetime as dt
 import random
 from typing import Callable, Optional
@@ -19,6 +20,8 @@ import psycopg
 from psycopg.rows import dict_row
 
 from models import DAYS_OF_WEEK, CalendarDay, PlanDay, Recipe, WeekPlan
+from services.ingredient_canonicalization import canonicalize_ingredient_name
+from services.ingredients import list_ingredients
 from services.recipes import get_recipe, list_recipes
 
 ROTATION_WINDOW_DAYS = 21  # 3 weeks — see docs/DECISIONS.md
@@ -39,6 +42,8 @@ BUSY_DAY_QUICK_THRESHOLD_MINUTES = 20
 BUSY_DAY_QUICK_FALLBACK_BONUS = 7.5  # see docs/DECISIONS.md
 NON_BUSY_DAY_QUICK_FALLBACK_PENALTY = 0.1  # see docs/DECISIONS.md
 ENJOYMENT_WEIGHT_PER_STAR = 0.1
+INGREDIENT_OVERLAP_BONUS = 1.0  # see docs/DECISIONS.md
+STAPLE_FREQUENCY_THRESHOLD = 0.5  # see docs/DECISIONS.md
 
 
 def current_season(for_date: dt.date) -> str:
@@ -63,10 +68,20 @@ def score_recipe(
     last_cooked: Optional[dt.date],
     today: dt.date,
     rotation_window_days: int = ROTATION_WINDOW_DAYS,
+    overlap_count: int = 0,
 ) -> float:
     """Weighted score for how well a recipe fits a given day. Higher means
     more likely to be picked — candidates are drawn by weighted random
-    choice, not by taking the top score outright."""
+    choice, not by taking the top score outright.
+
+    `overlap_count` — how many *distinctive* (non-staple) canonical
+    ingredients this recipe shares with recipes already committed to
+    elsewhere in the same week — is precomputed by the caller
+    (`choose_recipe`), not looked up here, same as `last_cooked`. See
+    docs/DECISIONS.md for why this needed a genuinely new mechanism
+    (a running cross-day accumulator) rather than another static
+    per-recipe weight like everything else in this function.
+    """
     weight = 1.0
 
     if recipe.seasonality == season:
@@ -90,6 +105,9 @@ def score_recipe(
 
     weight *= 1 + (recipe.family_enjoyment * ENJOYMENT_WEIGHT_PER_STAR)
 
+    if overlap_count:
+        weight *= (1 + INGREDIENT_OVERLAP_BONUS) ** overlap_count
+
     return weight
 
 
@@ -101,8 +119,21 @@ def choose_recipe(
     last_cooked_by_recipe: dict[int, dt.date],
     today: dt.date,
     rng: random.Random,
+    canonical_ingredients_by_recipe: Optional[dict[int, frozenset[str]]] = None,
+    committed_canonical_ingredients: frozenset[str] = frozenset(),
 ) -> Recipe:
-    """Weighted-random pick of one recipe from `candidates` for a day."""
+    """Weighted-random pick of one recipe from `candidates` for a day.
+
+    `canonical_ingredients_by_recipe` / `committed_canonical_ingredients`
+    are optional and default to "no overlap bonus for anyone" — the shape
+    `swap_day_recipe` relies on to stay completely unaffected by this
+    feature (see docs/DECISIONS.md: swap deliberately doesn't get
+    cross-day overlap awareness). `committed_canonical_ingredients` is
+    assumed to already exclude staple ingredients (see
+    `_staple_canonical_ingredients`), so no staple-filtering happens here
+    on the candidate side either.
+    """
+    canonical_ingredients_by_recipe = canonical_ingredients_by_recipe or {}
     weights = [
         score_recipe(
             recipe,
@@ -110,10 +141,39 @@ def choose_recipe(
             is_busy=is_busy,
             last_cooked=last_cooked_by_recipe.get(recipe.id),
             today=today,
+            overlap_count=len(
+                canonical_ingredients_by_recipe.get(recipe.id, frozenset())
+                & committed_canonical_ingredients
+            ),
         )
         for recipe in candidates
     ]
     return rng.choices(candidates, weights=weights, k=1)[0]
+
+
+def _staple_canonical_ingredients(
+    canonical_ingredients_by_recipe: dict[int, frozenset[str]]
+) -> frozenset[str]:
+    """Canonical ingredients present in >= STAPLE_FREQUENCY_THRESHOLD of
+    recipes that actually have at least one ingredient — recipes with
+    none (e.g. Takeout) don't inform commonality and are excluded from
+    the denominator, though they remain full candidates for selection as
+    always. Dynamic, recomputed fresh from the current candidate pool
+    every generation run, not a hardcoded word list — so it naturally
+    adapts as more recipes get added over time instead of going stale.
+    See docs/DECISIONS.md."""
+    non_empty = [
+        ingredients for ingredients in canonical_ingredients_by_recipe.values() if ingredients
+    ]
+    if not non_empty:
+        return frozenset()
+    frequency: collections.Counter = collections.Counter()
+    for ingredients in non_empty:
+        frequency.update(ingredients)
+    threshold_count = STAPLE_FREQUENCY_THRESHOLD * len(non_empty)
+    return frozenset(
+        ingredient for ingredient, count in frequency.items() if count >= threshold_count
+    )
 
 
 def generate_week_plan(
@@ -146,6 +206,18 @@ def generate_week_plan(
     no longer exists or was deactivated by generation time, this falls
     back to normal scoring for that day rather than failing the whole
     plan.
+
+    Ingredient-overlap bonus (see docs/DECISIONS.md): auto-generated days
+    favor recipes that share *distinctive* (non-staple) canonical
+    ingredients with recipes already chosen earlier in this same
+    generation run — `canonical_ingredients_by_recipe` is precomputed
+    once up front, same shape as `last_cooked_by_recipe` below, and
+    `committed_canonical_ingredients` accumulates as the day loop runs.
+    Pre-assigned special-occasion days are deliberately never added to
+    that accumulator — their ingredients don't influence the rest of the
+    week's overlap scoring, by construction, not by filtering them out
+    afterward. `swap_day_recipe` does not get this treatment at all —
+    see its own docstring.
     """
     rng = rng or random.Random()
     recipes = [r for r in list_recipes(conn) if not r.is_special_occasion]
@@ -153,6 +225,16 @@ def generate_week_plan(
         raise ValueError(
             "No active, non-special-occasion recipes to build a plan from."
         )
+
+    canonical_ingredients_by_recipe: dict[int, frozenset[str]] = {}
+    for recipe in recipes:
+        ingredients = list_ingredients(conn, recipe.id)
+        canonical_ingredients_by_recipe[recipe.id] = frozenset(
+            canonicalize_ingredient_name(ingredient.name)
+            for ingredient in ingredients
+            if ingredient.name.strip()
+        )
+    staple_canonical_ingredients = _staple_canonical_ingredients(canonical_ingredients_by_recipe)
 
     last_cooked_by_recipe = last_cooked_dates(conn)
     today = dt.date.today()
@@ -169,6 +251,7 @@ def generate_week_plan(
         ).fetchone()[0]
 
         used_recipe_ids: set[int] = set()
+        committed_canonical_ingredients: set[str] = set()
         for offset, day_name in enumerate(DAYS_OF_WEEK):
             cal_day = calendar_by_day[day_name]
             plan_date = week_start_date + dt.timedelta(days=offset)
@@ -189,9 +272,15 @@ def generate_week_plan(
                     last_cooked_by_recipe=last_cooked_by_recipe,
                     today=today,
                     rng=rng,
+                    canonical_ingredients_by_recipe=canonical_ingredients_by_recipe,
+                    committed_canonical_ingredients=frozenset(committed_canonical_ingredients),
                 )
                 chosen_id = chosen.id
                 used_recipe_ids.add(chosen_id)
+                committed_canonical_ingredients |= (
+                    canonical_ingredients_by_recipe.get(chosen_id, frozenset())
+                    - staple_canonical_ingredients
+                )
 
             conn.execute(
                 """
@@ -283,6 +372,12 @@ def swap_day_recipe(
     is simply ignored and the unfiltered candidates are used, so a broken
     or unavailable filter can never break a swap (docs/AGENT_INSTRUCTIONS.md
     §6 — no core service may depend on AI assist being available).
+
+    Deliberately does NOT get `generate_week_plan()`'s ingredient-overlap
+    bonus — a swap is a single, isolated day change with no visibility
+    into what the rest of the week already committed to, and giving it
+    that context was a real design question this project chose not to
+    take on yet, not an oversight. See docs/DECISIONS.md.
     """
     rng = rng or random.Random()
     plan_day = get_plan_day(conn, plan_day_id)

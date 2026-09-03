@@ -1915,3 +1915,104 @@ cases are really extraction artifacts, not canonicalization failures),
 and not the separate "favor recipes that share ingredients across the
 week" feature, which depends on this working first and is scoped
 separately once real usage of this shows how well it holds up.
+
+## 2026-09-03 — Overlap-aware plan generation
+
+The "favor recipes that share ingredients across the week" feature
+flagged above, now built on top of ingredient canonicalization.
+
+**Why this needed a genuinely new mechanism, not another static
+per-recipe weight.** Every existing factor in `score_recipe()`
+(seasonality, rotation, busy-day cook-time, quick-fallback bonus/penalty,
+enjoyment) is computable from a single recipe plus static, precomputed
+per-recipe context (e.g. `last_cooked`) — none of them need to know what
+*other* days in the same generation run already picked. Overlap-
+awareness is different in kind: whether Wednesday's candidate is worth a
+bonus depends on what Monday and Tuesday's *choices* actually were,
+which doesn't exist until the day loop has already run partway through.
+`generate_week_plan()` now precomputes
+`canonical_ingredients_by_recipe: dict[int, frozenset[str]]` once up
+front (same shape and cost as the existing `last_cooked_dates()`
+precompute), and maintains a running `committed_canonical_ingredients`
+accumulator that grows as the day loop executes — the first genuine
+sequential dependency in this file, everything else stays a pure,
+order-independent per-recipe weight.
+
+**Real baseline, from investigation, not assumed:** the raw pairwise
+overlap number (47.3% of recipe pairs share *something*) was misleading
+— every one of those pairs shared it via garlic/onion/olive oil/butter,
+which 4-7 of the 8 non-empty active recipes all contain regardless of
+pairing. Excluding those, only 9/55 pairs (16.4%) share a genuinely
+distinctive ingredient (parmesan, crème fraîche, beef stock, tomatoes,
+tomato purée, parsley, sunflower oil). Day-level simulation (1,000
+trials): baseline "distinctive overlap by chance" is already 47.5%
+(unsurprising with only 8 usable recipes filling 7 slots most weeks);
+`bonus=1.0` raised this to 58.3% (+10.8pp), without visibly collapsing
+variety across the 8 real recipes (9-14% pick share each, vs. a flat
+12.5% each at bonus=0). Higher bonus values (2.0, 4.0) pushed the rate
+further (63-66%) but started measurably favoring the mutually-
+overlapping cluster (lasagne/stroganoff/shepherd's pie/pasta/risotto/
+curry) over the genuinely distinctive outliers (Thai green curry,
+chicken fajitas, ~7% each at bonus=4.0 vs. ~12% at bonus=1.0) — bonus=1.0
+was chosen as the value with real, measured lift that didn't yet show
+that skew.
+
+**`INGREDIENT_OVERLAP_BONUS = 1.0`, applied as
+`weight *= (1 + bonus) ** overlap_count`** — `overlap_count` is
+precomputed by `choose_recipe()` per candidate (length of the
+intersection between the candidate's own canonical ingredients and the
+committed set), then passed into `score_recipe()` as a plain int, same
+"caller precomputes, `score_recipe` stays a pure function of its inputs"
+pattern `last_cooked` already established — `score_recipe()` itself has
+no DB access and no knowledge of *why* a count is what it is.
+
+**Staple exclusion: a dynamic frequency threshold
+(`STAPLE_FREQUENCY_THRESHOLD = 0.5`), not a hardcoded word list.** Any
+canonical ingredient present in >= 50% of the current active candidate
+pool's *non-empty* recipes (recipes with zero ingredients, e.g.
+Takeout, don't inform commonality and are excluded from the denominator,
+though they remain full scoring candidates as always) is excluded from
+`committed_canonical_ingredients` when it's updated — never subtracted
+on the candidate side, since the accumulator itself simply never
+contains a staple. `_staple_canonical_ingredients()` recomputes this
+fresh from `canonical_ingredients_by_recipe` every `generate_week_plan()`
+call, so it naturally tracks the real pool as more recipes get added —
+a hardcoded list (as tested during investigation, garlic/onion/olive
+oil/butter) would need manual upkeep and would silently go stale the
+moment the roster's composition shifts. Confirmed by test that this
+dynamic threshold, run against the real dev-DB-shaped 8-recipe set,
+lands on exactly the same four ingredients the investigation's
+hardcoded proxy list used — the dynamic version isn't a behavior change
+today, only a design choice that stops it from needing one later.
+
+**Deliberately NOT applied to `swap_day_recipe()` — a scope decision, not
+an oversight.** A swap is a single, isolated day change; giving it
+visibility into what the rest of the week already committed to is a
+real, separate design question (does a swap's replacement still need to
+"fit" the week's ingredient plan, or is a swap allowed to deliberately
+break overlap in favor of something else the household wants right now?)
+that wasn't taken on in this pass. `choose_recipe()`'s new parameters
+both default to "no bonus for anyone," so `swap_day_recipe()`'s existing
+call, unchanged, behaves identically to before this feature existed —
+confirmed by the full existing swap test suite passing unmodified.
+
+**Order-dependency (Monday always 0%, Thu/Fri peak, Sunday dip) — a
+known, accepted characteristic for v1, not a bug.** Confirmed by
+simulation during investigation: Monday has no prior-day context by
+construction (nothing to build overlap from yet), overlap climbs through
+the week as the committed set grows, then drops again on the last day or
+two as the no-repeat rule narrows the remaining candidates. Accepted
+as-is rather than reordering generation or adding a two-pass approach —
+both are real added complexity that doesn't seem justified yet against
+an 8-recipe pool where the *whole* feature's measured lift is already
+modest (see below). Revisit if the recipe pool grows enough that this
+lopsidedness becomes a household-visible complaint rather than a
+statistical curiosity.
+
+**Honest scale assessment, carried over from investigation:** with the
+current 8-usable-recipe pool, this is a real but modest improvement
+(+10.8pp over a baseline that's already fairly high by chance). The
+value of this feature is expected to grow as the recipe pool grows —
+more recipes means more chances for genuinely distinctive overlap to
+exist and for the bonus to have real signal to work with — not
+something this pass oversells at the current scale.
