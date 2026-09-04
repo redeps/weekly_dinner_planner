@@ -288,3 +288,23 @@ it).
   Local dev and mocked tests can't surface this either way. See
   docs/DECISIONS.md — this needs an actual deployed test send to confirm
   once Milestone 13 (Hosted Version) is live.
+
+## Roadmap catch-up — work completed between Milestones 12 and 15 without its own entry
+
+A one-time catch-up, not a milestone itself: several rounds of real,
+shipped work landed between Milestones 12 and 15 without ever getting a
+roadmap entry — recorded here for the record before Milestone 16 extends
+this document further, so the gap doesn't widen. See docs/DECISIONS.md
+for the full reasoning behind each.
+
+- **Busy-day preference strengthened toward quick-fallback recipes** —
+  2026-09-02. Also the related non-busy-day quick-fallback penalty, same
+  date.
+- **Cook Mode secondary split: sentence-packing above a 180-char proxy
+  threshold** — 2026-09-02.
+- **Ingredient name canonicalization for grocery-list grouping** —
+  2026-09-03, plus a same-day follow-up (unit normalization, noise-word
+  additions).
+- **Overlap-aware plan generation**, favoring shared ingredients across a
+  week's recipes — 2026-09-03, plus a same-day multi-week stability
+  check.
