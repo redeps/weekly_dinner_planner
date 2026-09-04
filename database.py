@@ -227,6 +227,21 @@ SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         )
         """,
     ),
+    (
+        14,
+        # Milestone 18 Phase 1 — shopping mode's completion flag. NULL
+        # (the default for every existing and newly-generated row) means
+        # "not completed"; a set timestamp means the Grocery List page
+        # treats this week's list as empty until a new week_plan is
+        # generated. A fresh generate_week_plan() call never sets this
+        # column, so a new week starts unset with zero extra logic — see
+        # docs/DECISIONS.md. Nullable, not a boolean 0/1 like this
+        # schema's other flags (is_busy, is_quick_fallback): the
+        # timestamp itself is useful (when the trip was finished), and
+        # "unset" is a real, distinct third state from "false", not just
+        # a default value.
+        "ALTER TABLE week_plans ADD COLUMN IF NOT EXISTS shopping_completed_at TEXT",
+    ),
 ]
 
 _EXPORT_TABLES = [

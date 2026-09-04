@@ -464,3 +464,46 @@ what's on screen.
   (`detect_category_edits`) instead, and the AppTest-level coverage is
   limited to confirming the page renders the editor with correct initial
   data and never creates an override on its own.
+
+## Milestone 18 — Shopping Mode 🚧
+
+Reverses the 2026-08-31 "Grocery list is not a shopping-mode feature"
+decision — see docs/DECISIONS.md for the formal supersession entry.
+Checking an item off during a trip persists (DB-backed, not session
+state, so it survives a closed tab or an app reboot mid-trip); "Finish
+Shopping" marks the week's trip complete, after which the list reads as
+empty until a new plan is generated. Phased given how much of the
+Grocery List page's interaction model this changes.
+
+- **Phase 1 — Completion flag ✅ done:** `week_plans.shopping_completed_at`
+  (nullable timestamp; `NULL` = not completed). `services/shopping_mode.py`'s
+  `mark_shopping_completed()`. "Finish Shopping" button on the Grocery
+  List page; the whole aggregated-list-and-export section (the
+  `st.data_editor` table and the CSV download) is gated on the flag
+  being unset — a completed week reads as empty, not deleted. Confirmed
+  directly, not assumed: a fresh `generate_week_plan()` call needs no
+  changes at all (it never sets the new column, so a new week always
+  starts unset regardless of any prior week's state), and recurring/
+  one-off manual items need zero new logic (their existing
+  `week_plan_id`-scoped queries already don't know or care about
+  completion state). The manual-item paste-in/recurring sections are
+  untouched by completion in this phase — recurring items in particular
+  have no week dependency to gate on.
+- **Phase 2 — Checked-item state (not built yet):** a new
+  `grocery_checked_items` table keyed on `(week_plan_id, canonical_name,
+  unit)` — the grocery list's post-aggregation display identity, not a
+  source `recipe_ingredients` row, since a checked item may represent
+  several merged rows. `unit` stored as `TEXT NOT NULL DEFAULT ''`, never
+  `NULL` — a `UNIQUE` constraint over a nullable column doesn't reject
+  duplicates in Postgres (`NULL` is never equal to `NULL`), which would
+  have silently broken the upsert this table needs for the common
+  "no unit on this line" case. "Start Shopping" adds a `Checked`
+  `CheckboxColumn` to the existing `st.data_editor` (reusing the same
+  widget the Category override already uses); a checked row drops out of
+  the active view into a collapsed "Checked off (N)" section rendered
+  with `_render_manage_list()`'s existing list-plus-button pattern (a
+  plain "Restore" button, not a second data editor — restoring only ever
+  goes one direction). Export stays unaffected by checked state while a
+  trip is in progress (no new filtering logic), and disappears entirely
+  once completed via the same Phase 1 gate — no separate "disable
+  export" logic needed.

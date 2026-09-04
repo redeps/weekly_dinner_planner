@@ -331,7 +331,12 @@ def _dict_cursor(conn: psycopg.Connection) -> psycopg.Cursor:
 
 
 def _row_to_week_plan(row: dict) -> WeekPlan:
-    return WeekPlan(id=row["id"], week_start_date=row["week_start_date"], created_at=row["created_at"])
+    return WeekPlan(
+        id=row["id"],
+        week_start_date=row["week_start_date"],
+        created_at=row["created_at"],
+        shopping_completed_at=row["shopping_completed_at"],
+    )
 
 
 def _row_to_plan_day(row: dict) -> PlanDay:

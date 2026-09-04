@@ -567,6 +567,36 @@ def test_build_grocery_list_uses_stored_category_when_no_override_set(conn):
     assert [i.name for i in result["pantry"]] == ["Milk"]
 
 
+# --- Milestone 18 Phase 1: build_grocery_list() is unaffected by a prior
+# week's shopping_completed_at -- recurring items still reappear and
+# one-off items still don't leak, exactly as before this feature, with
+# no new logic added to make that hold ---
+
+
+def test_recurring_item_reappears_in_a_new_week_after_a_prior_week_was_completed(conn):
+    from services import shopping_mode as shopping_service
+
+    week_a = make_week_plan(conn, [("monday", None)])
+    grocery_items_service.add_item(conn, week_plan_id=None, name="Dish soap")
+    shopping_service.mark_shopping_completed(conn, week_a)
+
+    week_b = make_week_plan(conn, [("monday", None)])
+    result = grocery_service.build_grocery_list(conn, week_b)
+    assert [i.name for i in result["other"]] == ["Dish soap"]
+
+
+def test_one_off_item_from_a_completed_week_does_not_leak_into_a_new_week(conn):
+    from services import shopping_mode as shopping_service
+
+    week_a = make_week_plan(conn, [("monday", None)])
+    grocery_items_service.add_item(conn, week_plan_id=week_a, name="Birthday candles")
+    shopping_service.mark_shopping_completed(conn, week_a)
+
+    week_b = make_week_plan(conn, [("monday", None)])
+    result = grocery_service.build_grocery_list(conn, week_b)
+    assert result == {}
+
+
 # --- Ingredient name canonicalization (services/ingredient_canonicalization.py) ---
 # Regression tests using the real, messy raw ingredient-name strings found
 # in the dev DB during investigation (see docs/DECISIONS.md), not

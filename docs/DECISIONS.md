@@ -2557,3 +2557,66 @@ proven directly with a test that gives one canonical ingredient a
 recipe-derived line *and* a manual item stored under different
 `store_category` values, then confirms both merge into one group under
 the override once set.
+
+## 2026-09-04 — Supersedes "Grocery list is not a shopping-mode feature" (2026-08-31): shopping mode approved
+
+The 2026-08-31 entry above is superseded, not deleted or edited — this
+project's append-only convention keeps the original decision and its
+reasoning on record, since it documented a real, deliberate choice made
+at the time, not an error to erase.
+
+Reversed at explicit user direction: shopping mode (check items off
+during a trip, persisted so it survives a closed tab or a background/
+reboot mid-trip; "Finish Shopping" empties the list until the next plan)
+is now being built. See docs/DATA_MODEL.md
+(`week_plans.shopping_completed_at`, and Phase 2's planned
+`grocery_checked_items`), docs/PRODUCT_SPEC.md §11 (updated in place),
+and docs/ROADMAP.md Milestone 18 for the design and implementation notes.
+
+**Phase 1 implementation notes** (`week_plans.shopping_completed_at` +
+"Finish Shopping" + the empty-state gate; no checked-item UI yet):
+
+**DB-backed state confirmed necessary, not assumed, for the completion
+flag itself too** — though this phase only needed a single column, not a
+new table, since "is this week's shopping done" genuinely is a property
+of the week plan row itself, not a separate table concept the way
+individual checked items are (Phase 2). Nullable `TEXT`, not a boolean
+0/1 like this schema's other flags (`is_busy`, `is_quick_fallback`): the
+timestamp is itself useful information (when the trip finished), and
+"unset" is a real third state distinct from "false," not just a default.
+
+**Confirmed directly, not assumed: a fresh `generate_week_plan()` call
+needs zero changes.** Its `INSERT INTO week_plans (week_start_date)
+VALUES (%s)` never mentions the new column, so a new row's
+`shopping_completed_at` is `NULL` regardless of whether the *previous*
+week plan was completed — proven with a test that completes one week,
+generates a second, and asserts the second's flag is unset before
+touching anything else.
+
+**Gating lives entirely in the page, not in `build_grocery_list()`.**
+The service function stays completion-agnostic — it has no idea whether
+a week's shopping is done, and doesn't need to: `pages/6_Grocery_List.py`
+decides whether to call/render it at all based on
+`week_plan.shopping_completed_at`. This keeps `build_grocery_list()`'s
+existing single responsibility (pure aggregation) intact, and confirms
+recurring/one-off manual items needed zero new logic — their existing
+`week_plan_id`-scoped queries (Milestone 17 Phase 1) already don't know
+or care about completion state, proven directly against `build_grocery_list()`
+itself (a completed week's recurring item still shows up correctly for
+the *next* week's list; a completed week's one-off item still doesn't
+leak into the next week), not just re-asserted from memory.
+
+**Scope check confirmed:** completing a week only gates the aggregated
+list-and-export section. The one-off/recurring manual-item management
+sections below it are untouched in this phase — recurring items in
+particular have no week dependency at all, so there's no reason to hide
+that section just because this week's trip is done.
+
+**Finish Shopping button given an explicit `key=`** even though nothing
+about its own behavior required one — every other interactive widget on
+this page already has one, and leaving it keyless (Streamlit still
+handles keyless buttons at the framework level) surfaced a real
+`AttributeError` in two existing tests that iterate `at.button` and call
+`.key.startswith(...)` unconditionally, since AppTest reports a keyless
+button's `.key` as `None`. Fixed by matching this page's own established
+convention rather than adding a None-guard to the two affected tests.

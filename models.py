@@ -79,6 +79,7 @@ class WeekPlan:
     id: int
     week_start_date: str
     created_at: str
+    shopping_completed_at: Optional[str] = None
 
 
 @dataclass

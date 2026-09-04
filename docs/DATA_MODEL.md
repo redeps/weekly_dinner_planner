@@ -13,7 +13,9 @@ Milestone 7 introduces `cook_history`. Milestone 14 introduces
 `app_settings` and `plan_days.household_size_override`. Milestone 16
 introduces `recipes.course` and `plan_day_dishes` (all 4 phases complete
 — see `docs/ROADMAP.md`). Milestone 17 introduces `manual_grocery_items`
-(Phase 1) and `ingredient_category_overrides` (Phase 2).
+(Phase 1) and `ingredient_category_overrides` (Phase 2). Milestone 18
+introduces `week_plans.shopping_completed_at` (Phase 1 so far; Phase 2
+will add a `grocery_checked_items` table).
 
 ## RECIPES
 
@@ -58,6 +60,7 @@ One row per generated week.
 | id           | integer PK |                                                |
 | week_start_date | date   | the Monday (or chosen start day) of the week    |
 | created_at   | timestamp |                                                |
+| shopping_completed_at | timestamp, nullable | Milestone 18 Phase 1 — `NULL` means shopping isn't done; a set value means the Grocery List page treats this week's list as empty (not deleted) until a new week plan is generated. A fresh `generate_week_plan()` call never sets this, so a new week always starts unset regardless of any prior week's state |
 
 ## PLAN_DAYS
 

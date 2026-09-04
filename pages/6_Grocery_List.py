@@ -12,9 +12,17 @@ each day's main *and* its attached sides/desserts; Milestone 17 — every
 manual item and any persisted category correction), so it regenerates
 automatically when a day is swapped, an attachment changes, a manual
 item is added/removed, or a category is recategorized — no separate
-refresh step needed. Still no check-off state or shopping-mode UI, per
-docs/DECISIONS.md — recategorizing is a narrow, deliberate exception to
-"read-only," not a step toward either of those.
+refresh step needed.
+
+Shopping mode (Milestone 18) is under way, reversing the original
+"no check-off state, no shopping-mode UI" decision — see docs/DECISIONS.md
+for the formal supersession entry. Phase 1 only, so far: "Finish
+Shopping" sets `week_plans.shopping_completed_at`, and this whole
+table-and-export section is gated on it being unset — a completed
+week's list reads as empty (not deleted; the underlying data is all
+still there) until a new week plan is generated, whose own
+`shopping_completed_at` starts unset regardless of any prior week's
+state. No checked-off-item UI yet (Phase 2).
 
 Rendered as a table (Category / Ingredient / Quantity / Unit, one row per
 canonical ingredient+unit combination) via `st.data_editor` — only the
@@ -51,6 +59,7 @@ from services.categorization import suggest_category
 from services.grocery_items import add_item, list_manual_items, parse_leading_quantity, remove_item
 from services.grocery_list import build_grocery_list, grocery_list_csv, grocery_list_table_rows
 from services.plan_generation import get_latest_week_plan
+from services.shopping_mode import mark_shopping_completed
 
 st.set_page_config(page_title="Grocery List — Meal Planner", page_icon="🍽️")
 require_password()
@@ -192,52 +201,62 @@ if not week_plan:
 
 st.caption(f"Week of {week_plan.week_start_date}")
 
-grocery_list = build_grocery_list(conn, week_plan.id)
-
-if not grocery_list:
-    st.write("_No ingredients needed this week._")
+if week_plan.shopping_completed_at is not None:
+    st.success(
+        "Shopping for this week is complete. Generate a new week plan "
+        "from the Week Plan screen to start next week's list."
+    )
 else:
-    rows = grocery_list_table_rows(grocery_list)
-    table_data = [
-        {
-            "Category": row.category,
-            "Ingredient": row.ingredient,
-            "Quantity": row.quantity,
-            "Unit": row.unit,
-        }
-        for row in rows
-    ]
-    st.caption("Recategorize an ingredient by changing its Category cell below.")
-    edited = st.data_editor(
-        table_data,
-        hide_index=True,
-        use_container_width=True,
-        num_rows="fixed",
-        disabled=["Ingredient", "Quantity", "Unit"],
-        column_config={
-            "Category": st.column_config.SelectboxColumn(
-                "Category",
-                options=[category.capitalize() for category in STORE_CATEGORIES],
-                required=True,
-            ),
-        },
-        key="grocery_table_editor",
-    )
-    category_edits = detect_category_edits(table_data, edited)
-    for canonical_name, new_category in category_edits:
-        set_override(conn, canonical_name, new_category)
-    if category_edits:
-        st.rerun()
+    grocery_list = build_grocery_list(conn, week_plan.id)
 
-    st.download_button(
-        "Download as Excel (.csv)",
-        # utf-8-sig (a UTF-8 BOM) so Excel on Windows renders the "—"
-        # placeholder correctly instead of mojibake — Excel's CSV import
-        # otherwise assumes a legacy Windows codepage for a BOM-less file.
-        data=grocery_list_csv(grocery_list).encode("utf-8-sig"),
-        file_name=f"grocery-list-{week_plan.week_start_date}.csv",
-        mime="text/csv",
-    )
+    if not grocery_list:
+        st.write("_No ingredients needed this week._")
+    else:
+        rows = grocery_list_table_rows(grocery_list)
+        table_data = [
+            {
+                "Category": row.category,
+                "Ingredient": row.ingredient,
+                "Quantity": row.quantity,
+                "Unit": row.unit,
+            }
+            for row in rows
+        ]
+        st.caption("Recategorize an ingredient by changing its Category cell below.")
+        edited = st.data_editor(
+            table_data,
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+            disabled=["Ingredient", "Quantity", "Unit"],
+            column_config={
+                "Category": st.column_config.SelectboxColumn(
+                    "Category",
+                    options=[category.capitalize() for category in STORE_CATEGORIES],
+                    required=True,
+                ),
+            },
+            key="grocery_table_editor",
+        )
+        category_edits = detect_category_edits(table_data, edited)
+        for canonical_name, new_category in category_edits:
+            set_override(conn, canonical_name, new_category)
+        if category_edits:
+            st.rerun()
+
+        st.download_button(
+            "Download as Excel (.csv)",
+            # utf-8-sig (a UTF-8 BOM) so Excel on Windows renders the "—"
+            # placeholder correctly instead of mojibake — Excel's CSV import
+            # otherwise assumes a legacy Windows codepage for a BOM-less file.
+            data=grocery_list_csv(grocery_list).encode("utf-8-sig"),
+            file_name=f"grocery-list-{week_plan.week_start_date}.csv",
+            mime="text/csv",
+        )
+
+    if st.button("Finish Shopping", type="primary", key="finish_shopping"):
+        mark_shopping_completed(conn, week_plan.id)
+        st.rerun()
 
 st.divider()
 st.subheader("Add items to this week's list")
