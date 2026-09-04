@@ -349,11 +349,13 @@ investigation this milestone is based on.
   generation creates it. Week Plan renders each day's attached dishes
   read-only below its main; swapping a day's main leaves its attachments
   untouched (regression-tested).
-- **Phase 3 — Grocery List aggregation:** extend `build_grocery_list()`
-  to aggregate ingredients from every attached dish per day, not just the
-  main — confirmed to need no new scaling/canonicalization logic, since
-  `effective_ingredient_quantity()` is already per-recipe and
-  course-agnostic.
+- **Phase 3 — Grocery List aggregation ✅ done:** extended
+  `build_grocery_list()` to aggregate ingredients from every attached
+  dish per day, not just the main — confirmed to need no new scaling/
+  canonicalization logic, since `effective_ingredient_quantity()` is
+  already per-recipe and course-agnostic. A day's attached dishes are
+  included even if that day has no main recipe assigned — the two are
+  independent.
 - **Phase 4 — Cook Mode multi-dish switcher:** a day with several
   attached dishes gets a switcher between them (not concatenated steps —
   real dishes are cooked in parallel, not as one linear sequence), each

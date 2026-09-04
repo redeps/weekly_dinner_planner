@@ -1,9 +1,11 @@
 """
 Grocery list generation — aggregates recipe_ingredients across the current
-week plan's 7 days, grouped by store category (see docs/PRODUCT_SPEC.md
-§11). Nothing here is persisted: the list is computed fresh from the
-current `plan_days` + `recipe_ingredients` every time it's built, so a
-swapped day is reflected automatically the next time it's viewed — no
+week plan's 7 days (each day's main recipe *and* every attached side/
+dessert, Milestone 16 Phase 3), grouped by store category (see
+docs/PRODUCT_SPEC.md §11). Nothing here is persisted: the list is
+computed fresh from the current `plan_days` + `plan_day_dishes` +
+`recipe_ingredients` every time it's built, so a swapped day or a changed
+attachment is reflected automatically the next time it's viewed — no
 check-off state or shopping-mode UI, per docs/DECISIONS.md.
 
 Household-size scaling (Milestone 14): each day's ingredient quantities
@@ -55,7 +57,7 @@ from typing import Optional
 from models import STORE_CATEGORIES
 from services.ingredient_canonicalization import canonicalize_ingredient_name, normalize_unit
 from services.ingredients import list_ingredients
-from services.plan_generation import list_plan_days
+from services.plan_generation import list_dishes, list_plan_days
 from services.recipes import get_recipe
 from services.settings import effective_ingredient_quantity, get_default_household_size
 
@@ -86,48 +88,59 @@ class GroceryItem:
 def build_grocery_list(
     conn: psycopg.Connection, week_plan_id: int
 ) -> dict[str, list[GroceryItem]]:
-    """Aggregate ingredients across a week plan's 7 assigned recipes.
+    """Aggregate ingredients across a week plan's 7 days — each day's main
+    recipe *and* every side/dessert attached to it (Milestone 16 Phase 3,
+    `services.plan_generation.list_dishes`), not just the main.
 
-    Counted once per day, so a recipe repeated within the week contributes
-    its ingredients twice. Grouped by canonical ingredient name (see
+    Counted once per day per dish, so a recipe repeated within the week
+    (as a main, or attached to more than one day) contributes its
+    ingredients each time. Grouped by canonical ingredient name (see
     module docstring); within a group, quantities are summed where unit
     matches (case/whitespace-insensitively) — a differing unit becomes a
     separate line within the same group rather than being combined.
     Grouped by store category, empty categories omitted, items sorted
     alphabetically by canonical name within each category.
+
+    An attached side/dessert scales exactly like a main — same
+    `effective_ingredient_quantity()` call, keyed off its own `servings`
+    and the day's household size/override, since scaling is a per-recipe
+    concept with no course-awareness needed (confirmed during the
+    Milestone 16 Phase 1 investigation, see docs/DECISIONS.md).
     """
     aggregated: dict[tuple, dict] = {}
     default_household_size = get_default_household_size(conn)
 
     for plan_day in list_plan_days(conn, week_plan_id):
-        if plan_day.recipe_id is None:
-            continue
-        recipe = get_recipe(conn, plan_day.recipe_id)
-        if recipe is None:
-            continue
+        day_recipes = []
+        if plan_day.recipe_id is not None:
+            main_recipe = get_recipe(conn, plan_day.recipe_id)
+            if main_recipe is not None:
+                day_recipes.append(main_recipe)
+        day_recipes.extend(list_dishes(conn, plan_day.id))
 
-        for ingredient in list_ingredients(conn, plan_day.recipe_id):
-            canonical = canonicalize_ingredient_name(ingredient.name)
-            unit = normalize_unit(ingredient.unit) or None
-            key = (canonical, unit, ingredient.store_category)
-            entry = aggregated.setdefault(
-                key,
-                {
-                    "canonical": canonical,
-                    "unit": unit,
-                    "store_category": ingredient.store_category,
-                    "quantity": None,
-                },
-            )
-            scaled_quantity = effective_ingredient_quantity(
-                ingredient.quantity,
-                recipe_servings=recipe.servings,
-                is_special_occasion=recipe.is_special_occasion,
-                household_size_override=plan_day.household_size_override,
-                default_household_size=default_household_size,
-            )
-            if scaled_quantity is not None:
-                entry["quantity"] = round((entry["quantity"] or 0) + scaled_quantity, 2)
+        for recipe in day_recipes:
+            for ingredient in list_ingredients(conn, recipe.id):
+                canonical = canonicalize_ingredient_name(ingredient.name)
+                unit = normalize_unit(ingredient.unit) or None
+                key = (canonical, unit, ingredient.store_category)
+                entry = aggregated.setdefault(
+                    key,
+                    {
+                        "canonical": canonical,
+                        "unit": unit,
+                        "store_category": ingredient.store_category,
+                        "quantity": None,
+                    },
+                )
+                scaled_quantity = effective_ingredient_quantity(
+                    ingredient.quantity,
+                    recipe_servings=recipe.servings,
+                    is_special_occasion=recipe.is_special_occasion,
+                    household_size_override=plan_day.household_size_override,
+                    default_household_size=default_household_size,
+                )
+                if scaled_quantity is not None:
+                    entry["quantity"] = round((entry["quantity"] or 0) + scaled_quantity, 2)
 
     items_by_group: dict[tuple, GroceryItem] = {}
     for entry in aggregated.values():

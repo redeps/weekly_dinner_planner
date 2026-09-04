@@ -7,6 +7,7 @@ import pytest
 import database
 from services import grocery_list as grocery_service
 from services import ingredients as ingredient_service
+from services import plan_generation as plan_service
 from services import recipes as recipe_service
 
 
@@ -193,6 +194,107 @@ def test_build_grocery_list_ignores_quick_fallback_recipes_with_no_ingredients(c
     recipe = make_recipe(conn, "Takeout")  # no ingredients
     week_plan_id = make_week_plan(conn, [("monday", recipe)])
     assert grocery_service.build_grocery_list(conn, week_plan_id) == {}
+
+
+# --- Milestone 16 Phase 3: attached side/dessert dishes ---
+
+
+def attach_dish_to_day(conn, week_plan_id, day_of_week, recipe_id):
+    plan_day = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == day_of_week
+    )
+    plan_service.attach_dish(conn, plan_day.id, recipe_id)
+
+
+def test_build_grocery_list_includes_attached_side_dish_ingredients(conn):
+    main = make_recipe(
+        conn, "Roast Chicken", [{"name": "chicken", "quantity": 1, "unit": "each", "store_category": "meat"}]
+    )
+    side = make_recipe(
+        conn, "Garden Salad",
+        [{"name": "lettuce", "quantity": 1, "unit": "each", "store_category": "produce"}],
+        servings=4,
+    )
+    week_plan_id = make_week_plan(conn, [("monday", main)])
+    attach_dish_to_day(conn, week_plan_id, "monday", side)
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+
+    assert [item.name for item in result["meat"]] == ["Chicken"]
+    assert [item.name for item in result["produce"]] == ["Lettuce"]
+
+
+def test_build_grocery_list_includes_attached_dessert_ingredients(conn):
+    main = make_recipe(conn, "Roast Chicken")
+    dessert = make_recipe(
+        conn, "Apple Crumble",
+        [{"name": "apple", "quantity": 3, "unit": "each", "store_category": "produce"}],
+    )
+    week_plan_id = make_week_plan(conn, [("monday", main)])
+    attach_dish_to_day(conn, week_plan_id, "monday", dessert)
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert result["produce"][0].name == "Apple"
+    assert result["produce"][0].lines[0].quantity == 3
+
+
+def test_build_grocery_list_includes_multiple_attached_dishes_on_one_day(conn):
+    main = make_recipe(conn, "Roast Chicken")
+    salad = make_recipe(
+        conn, "Garden Salad", [{"name": "lettuce", "quantity": 1, "unit": "each", "store_category": "produce"}]
+    )
+    pudding = make_recipe(
+        conn, "Yorkshire Pudding", [{"name": "flour", "quantity": 100, "unit": "g", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("sunday", main)])
+    attach_dish_to_day(conn, week_plan_id, "sunday", salad)
+    attach_dish_to_day(conn, week_plan_id, "sunday", pudding)
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [item.name for item in result["produce"]] == ["Lettuce"]
+    assert [item.name for item in result["pantry"]] == ["Flour"]
+
+
+def test_build_grocery_list_includes_dish_ingredients_even_with_no_main_recipe(conn):
+    """A day's attached dishes must not depend on that day having a main
+    recipe -- the two are independent (see docs/DECISIONS.md)."""
+    side = make_recipe(
+        conn, "Garden Salad", [{"name": "lettuce", "quantity": 1, "unit": "each", "store_category": "produce"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", None)])
+    attach_dish_to_day(conn, week_plan_id, "monday", side)
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [item.name for item in result["produce"]] == ["Lettuce"]
+
+
+def test_build_grocery_list_merges_attached_dish_ingredient_with_main_ingredient(conn):
+    main = make_recipe(
+        conn, "Roast Chicken", [{"name": "flour", "quantity": 200, "unit": "g", "store_category": "pantry"}]
+    )
+    side = make_recipe(
+        conn, "Yorkshire Pudding", [{"name": "flour", "quantity": 100, "unit": "g", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", main)])
+    attach_dish_to_day(conn, week_plan_id, "monday", side)
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [item.name for item in result["pantry"]] == ["Flour"]
+    assert result["pantry"][0].lines[0].quantity == 300
+
+
+def test_build_grocery_list_scales_attached_dish_by_same_day_household_override(conn):
+    main = make_recipe(conn, "Roast Chicken", servings=4)
+    side = make_recipe(  # servings=4
+        conn, "Yorkshire Pudding", [{"name": "flour", "quantity": 100, "unit": "g", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(
+        conn, [("monday", main)], household_size_overrides={"monday": 8}
+    )
+    attach_dish_to_day(conn, week_plan_id, "monday", side)
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert result["pantry"][0].lines[0].quantity == 200  # 100g * (8/4)
 
 
 def test_build_grocery_list_scales_quantity_by_day_household_size_override(conn):

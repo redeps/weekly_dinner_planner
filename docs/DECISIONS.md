@@ -2337,3 +2337,28 @@ action on an already-generated day is technically straightforward to add
 later without needing to touch the "Weekly Calendar owns all
 pre-generation input" model at all. Noted for a future round if wanted;
 not built now, since the request scoped this phase to read-only display.
+
+## 2026-09-04 — Milestone 16 Phase 3: Grocery List aggregation, and a day's dishes are independent of its main
+
+`build_grocery_list()`'s per-day loop used to `continue` (skip the day
+entirely) when `plan_day.recipe_id` was `None` — a guard against a state
+that, in practice, `generate_week_plan()` never produces (it always
+assigns a main or raises). Adding attached-dish aggregation meant
+revisiting that guard rather than leaving it: a day's attached
+sides/desserts (`plan_day_dishes`) have no dependency on that day having
+a main at all — they're a separate table keyed by `plan_day_id`, not by
+`plan_days.recipe_id`. Restructured the loop to build a per-day list of
+contributing recipes (`[main] if present, plus every attached dish`)
+rather than gating the whole day on the main's presence, so a
+hypothetical day with dishes but no main still contributes their
+ingredients — confirmed with a direct test
+(`test_build_grocery_list_includes_dish_ingredients_even_with_no_main_recipe`)
+rather than left as an untested assumption.
+
+No changes needed to canonicalization, grouping, sorting, or
+`grocery_list_table_rows()`/`grocery_list_csv()` — confirmed, not
+assumed, by running the existing test suite unchanged alongside the new
+attached-dish tests. Scaling composes for free: `effective_ingredient_quantity()`
+takes whichever recipe's own `servings` plus the day's household
+size/override, with no course-awareness, so an attached dish scales
+under the exact same day-level override as the main.

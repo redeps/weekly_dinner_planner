@@ -3,9 +3,11 @@ Grocery List screen — a read-only, generated, grouped-by-category table
 for the current week plan. See docs/PRODUCT_SPEC.md §11.
 
 Nothing here is persisted: this is recomputed from the live plan_days +
-recipe_ingredients on every render, so it regenerates automatically when a
-day is swapped — no separate refresh step needed. No check-off state or
-shopping-mode UI, per docs/DECISIONS.md.
+plan_day_dishes + recipe_ingredients on every render (Milestone 16 Phase
+3 — each day's main *and* its attached sides/desserts), so it regenerates
+automatically when a day is swapped or an attachment changes — no
+separate refresh step needed. No check-off state or shopping-mode UI, per
+docs/DECISIONS.md.
 
 Rendered as a table (Category / Ingredient / Quantity / Unit, one row per
 canonical ingredient+unit combination), not a bulleted list — see
