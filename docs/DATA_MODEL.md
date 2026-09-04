@@ -12,7 +12,8 @@ Milestone 1 introduces `recipes`. Milestone 2 introduces
 Milestone 7 introduces `cook_history`. Milestone 14 introduces
 `app_settings` and `plan_days.household_size_override`. Milestone 16
 introduces `recipes.course` and `plan_day_dishes` (all 4 phases complete
-— see `docs/ROADMAP.md`). Milestone 17 introduces `manual_grocery_items`.
+— see `docs/ROADMAP.md`). Milestone 17 introduces `manual_grocery_items`
+(Phase 1) and `ingredient_category_overrides` (Phase 2).
 
 ## RECIPES
 
@@ -131,6 +132,44 @@ data-loss bug this fixes.
 | unit          | text, nullable |                                                        |
 | store_category | text     | produce / dairy / meat / pantry / frozen / other, default "other" |
 | created_at    | timestamp |                                                             |
+
+## INGREDIENT_CATEGORY_OVERRIDES
+
+Milestone 17 Phase 2. A persistent correction to which store category a
+*canonical* ingredient belongs to (e.g. "milk" moved from Pantry to
+Dairy) — keyed on `services/ingredient_canonicalization.py`'s
+`canonicalize_ingredient_name()` output, its first persisted use.
+Resolved inside `build_grocery_list()`'s own aggregation
+(`services/category_overrides.py`), not by rewriting `recipe_ingredients`
+rows — the grocery list is never cached, so this is already both
+retroactive (every existing recipe regroups correctly next time any list
+is built) and prospective (so does a brand-new recipe added later) with
+no bulk `UPDATE` needed. Also consulted at ingredient-categorization
+suggestion time (Add/Edit Recipe), taking precedence over the static
+`categorization.py` dictionary and, structurally, over the AI 🤖
+suggestion (which only ever fires on a row an override didn't already
+resolve).
+
+`UNIQUE` on `canonical_name` — one override per canonical ingredient,
+upserted (`ON CONFLICT DO UPDATE`), same pattern as
+`app_settings`/`set_default_household_size`.
+
+**Stability note:** if `canonicalize_ingredient_name()`'s own noise-word/
+alias lists grow later (as documented, expected over time), an existing
+override keyed on an old canonical form could stop matching — not apply
+a wrong category, just silently stop applying the correction, falling
+back to the static dictionary or "other." Low-frequency and
+self-correcting (recategorize again), consistent with how canonicalization
+changes already reshuffle grocery-list grouping today with no migration
+mechanism.
+
+| column         | type      | notes                                          |
+|----------------|-----------|--------------------------------------------------|
+| id             | integer PK |                                                   |
+| canonical_name | text, `UNIQUE` |                                               |
+| store_category | text      | produce / dairy / meat / pantry / frozen / other  |
+| created_at     | timestamp |                                                   |
+| updated_at     | timestamp |                                                   |
 
 ## APP_SETTINGS
 

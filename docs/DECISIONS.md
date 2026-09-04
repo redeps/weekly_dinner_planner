@@ -2485,3 +2485,75 @@ recurring items before ever generating a first plan is a real but minor
 edge case (Milestone 4 happens almost immediately in normal use) — not
 built now, consistent with not over-engineering for a case that hasn't
 been asked for.
+
+## 2026-09-04 — Milestone 17 Phase 2: persistent ingredient category overrides
+
+**No retroactive bulk update, confirmed unnecessary rather than skipped
+as a shortcut.** The grocery list is never cached — `build_grocery_list()`
+recomputes it from scratch on every view. Tracing every place
+`recipe_ingredients.store_category` is actually read confirmed it's used
+in exactly one other user-visible spot besides Add/Edit Recipe's own
+editing form: nowhere else (not Recipe Detail, not Cook Mode). That means
+resolving the override *inside* the aggregation itself — before the
+grouping key is formed, in `_accumulate()`, now `conn`-aware — makes the
+grocery list correct for every existing recipe (retroactive) and every
+future recipe (prospective) the moment the override is set, with zero
+`recipe_ingredients` rows ever touched. A bulk `UPDATE` would have been
+this schema's first-ever cross-recipe mutation, for a benefit that's
+purely cosmetic (matching Add/Edit Recipe's per-recipe dropdown, which
+shows nothing incorrect to an actual shopper).
+
+**`suggest_category_with_override()` swapped into Add/Edit Recipe
+anyway, even though the grocery list's correctness didn't strictly
+require it.** This closes a real but separate UX gap: without it, a
+brand-new recipe would still show the *wrong* category in its own
+ingredient-row editor at import time (harmless for the grocery list,
+confusing to look at). Precedence over the AI 🤖 suggestion needed no
+extra code at all: that suggestion only ever fires on a row still stuck
+on `"other"` after the deterministic pass, and a row an override already
+resolved is never `"other"` in the first place — the two paths are
+structurally mutually exclusive.
+
+**Drag-and-drop confirmed not a fit, `st.data_editor` confirmed to be
+one.** Streamlit (the installed 1.62.0) has no native drag-and-drop
+widget; a third-party community component would be this project's first
+dependency with a first-party alternative actually available, which
+doesn't match how every other "avoid an exotic dependency" call in this
+codebase has gone (e.g. the no-scraping-library decision for recipe
+import). `st.data_editor` with a `column_config.SelectboxColumn` — both
+confirmed present in the installed version before committing to this
+design — gives an inline, per-row category dropdown directly on the
+existing table: the realistic equivalent of "drag it to the right
+category." Only the Category column is editable; Ingredient/Quantity/Unit
+stay `disabled=True`. `docs/PRODUCT_SPEC.md` §11 updated with one line
+noting this narrow exception — the "no check-off state, no shopping-mode
+UI" language there is otherwise untouched and still holds.
+
+**A real testing-framework limitation, found and worked around, not
+glossed over.** `streamlit.testing.v1`'s `Dataframe` proxy — what
+`st.data_editor` renders as in AppTest — exposes only `.value`, confirmed
+directly (`hasattr`/`dir()` against the installed library, then an actual
+`AttributeError` calling `.set_value()`), not assumed from the docs. There
+is currently no supported way to simulate a live `st.data_editor` cell
+edit through this version's testing harness. Rather than skip testing the
+requested "diff-detect-and-persist" behavior, the diff-detection itself
+(`detect_category_edits()`) was pulled out of the page script into
+`services/category_overrides.py` as a pure function operating on plain
+dicts — directly unit-testable with no Streamlit involved at all — while
+`_accumulate()`, `set_override()`, and `get_override()` cover the
+persistence half. AppTest-level coverage is limited to what it actually
+can confirm: the page renders the editor with correct initial data
+(including reflecting an existing override) and never creates one on its
+own. This also means `detect_category_edits()` living in a service
+module rather than inline in the page wasn't just a style preference —
+it's what made this feature testable at all given the harness's current
+limitation.
+
+**Cross-source consistency confirmed, not assumed.** Since
+`_accumulate()` already canonicalizes every ingredient name the same way
+regardless of source, a correction made against a recipe-derived "milk"
+line and a manual "milk" item resolve to the identical override key —
+proven directly with a test that gives one canonical ingredient a
+recipe-derived line *and* a manual item stored under different
+`store_category` values, then confirms both merge into one group under
+the override once set.

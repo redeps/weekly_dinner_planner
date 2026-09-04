@@ -58,6 +58,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from models import STORE_CATEGORIES
+from services.category_overrides import get_override
 from services.grocery_items import list_manual_items
 from services.ingredient_canonicalization import canonicalize_ingredient_name, normalize_unit
 from services.ingredients import list_ingredients
@@ -90,6 +91,7 @@ class GroceryItem:
 
 
 def _accumulate(
+    conn: psycopg.Connection,
     aggregated: dict[tuple, dict],
     *,
     name: str,
@@ -99,18 +101,30 @@ def _accumulate(
 ) -> None:
     """Fold one already-scaled (or unscaled, for a manual item) quantity
     line into `aggregated`, keyed by (canonical name, normalized unit,
-    store category) — the one grouping/summing rule shared by every
-    ingredient source `build_grocery_list()` reads from, recipe-derived
-    or manual."""
+    *effective* store category) — the one grouping/summing rule shared by
+    every ingredient source `build_grocery_list()` reads from,
+    recipe-derived or manual.
+
+    The effective category resolves any persisted override
+    (Milestone 17 Phase 2, `services.category_overrides`) for this
+    canonical name *before* the grouping key is formed, not as a later
+    relabel — otherwise the same canonical ingredient could still split
+    into two groups if different recipes happen to have stored different
+    raw `store_category` values for it. This is also the only place an
+    override is consulted: the grocery list is never cached, so
+    resolving it here is already both retroactive and prospective with
+    no need to rewrite any `recipe_ingredients` row (see docs/DECISIONS.md).
+    """
     canonical = canonicalize_ingredient_name(name)
+    effective_category = get_override(conn, canonical) or store_category
     normalized_unit = normalize_unit(unit) or None
-    key = (canonical, normalized_unit, store_category)
+    key = (canonical, normalized_unit, effective_category)
     entry = aggregated.setdefault(
         key,
         {
             "canonical": canonical,
             "unit": normalized_unit,
-            "store_category": store_category,
+            "store_category": effective_category,
             "quantity": None,
         },
     )
@@ -147,6 +161,12 @@ def build_grocery_list(
     Milestone 16 Phase 1 investigation, see docs/DECISIONS.md). A manual
     item is used exactly as entered, with no scaling attempt — it has no
     `servings` to scale from, since it isn't derived from any recipe.
+
+    A persisted category override (Milestone 17 Phase 2, see `_accumulate()`)
+    is resolved for every line here, recipe-derived or manual — a
+    corrected category always wins over whatever `store_category` was
+    actually stored, for every recipe that uses that ingredient, every
+    week, with no `recipe_ingredients` row ever rewritten.
     """
     aggregated: dict[tuple, dict] = {}
     default_household_size = get_default_household_size(conn)
@@ -169,6 +189,7 @@ def build_grocery_list(
                     default_household_size=default_household_size,
                 )
                 _accumulate(
+                    conn,
                     aggregated,
                     name=ingredient.name,
                     quantity=scaled_quantity,
@@ -178,6 +199,7 @@ def build_grocery_list(
 
     for item in list_manual_items(conn, week_plan_id):
         _accumulate(
+            conn,
             aggregated,
             name=item.name,
             quantity=item.quantity,

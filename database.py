@@ -204,6 +204,29 @@ SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         )
         """,
     ),
+    (
+        13,
+        # Milestone 17 Phase 2 — a persistent correction to which store
+        # category a canonical ingredient belongs to, keyed on the same
+        # canonical name services/ingredient_canonicalization.py already
+        # computes for grouping (its first persisted consumer — see
+        # docs/DECISIONS.md). Consulted inside build_grocery_list()'s own
+        # aggregation, not by rewriting recipe_ingredients rows — the
+        # grocery list is never cached, so resolving the override at
+        # aggregation time is already both retroactive and prospective
+        # with no bulk UPDATE needed. UNIQUE makes "already overridden"
+        # an upsert (ON CONFLICT DO UPDATE), same pattern as
+        # app_settings/set_default_household_size.
+        f"""
+        CREATE TABLE IF NOT EXISTS ingredient_category_overrides (
+            id SERIAL PRIMARY KEY,
+            canonical_name TEXT NOT NULL UNIQUE,
+            store_category TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT {_NOW_EXPR},
+            updated_at TEXT NOT NULL DEFAULT {_NOW_EXPR}
+        )
+        """,
+    ),
 ]
 
 _EXPORT_TABLES = [
@@ -216,6 +239,7 @@ _EXPORT_TABLES = [
     "email_recipients",
     "plan_day_dishes",
     "manual_grocery_items",
+    "ingredient_category_overrides",
 ]
 
 

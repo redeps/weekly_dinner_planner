@@ -227,6 +227,13 @@ all seven days' recipes (summing quantities where units match).
 - **not** designed for use inside a store — no check-off state, no mobile
   "shopping mode." The user transcribes it to a handwritten list. Keep this
   screen simple: a clean, printable/readable list, nothing more.
+- **Narrow, deliberate exception (Milestone 17 Phase 2):** the Category
+  column is editable in place (recategorize an ingredient by changing its
+  cell), persisting going forward as an `ingredient_category_overrides`
+  entry — the only interactive/editable part of this screen. This does
+  not reopen "no check-off state, no shopping-mode UI" above: there's
+  still nothing to check off, no in-store mode, and no other cell here is
+  editable. See docs/DECISIONS.md.
 
 ### Household-size scaling (Milestone 14)
 

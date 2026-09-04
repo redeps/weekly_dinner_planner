@@ -370,15 +370,20 @@ investigation this milestone is based on. ✅ Fully complete (all 4 phases).
   *or* any of its attached dishes.
 
 
-## Milestone 17 — Manual Grocery Items ✅
+## Milestone 17 — Manual Grocery Items & Category Overrides ✅
+
+Two small, contained passes, not a large phased breakdown — each sized
+and reviewed on its own given how small a surface each touches (a single
+table, a small service module, and Grocery List page UI each time). See
+docs/DECISIONS.md for the full investigation and implementation notes
+behind each phase.
+
+### Phase 1 — Manual grocery items ✅
 
 Grocery items not derived from any recipe: a one-off paste-in for this
 week only, and standing recurring items included every week. Merged into
 one capability rather than built as two separate features — investigated
-first and confirmed no real reason to keep them apart; see
-docs/DECISIONS.md for the full investigation and implementation notes.
-Sized as one contained pass, not phased, given the small surface (one
-table, one small service module, one page's worth of UI).
+first and confirmed no real reason to keep them apart.
 
 - `manual_grocery_items` — one table, not two, with a nullable
   `week_plan_id` (`NULL` = recurring, matched by every week; a set value
@@ -415,3 +420,47 @@ table, one small service module, one page's worth of UI).
   Calendar for reasons specific to that page. A persistent add/remove
   list (mirroring `email_recipients`' own UI) is shown for both this
   week's added one-off items and the standing recurring list.
+
+### Phase 2 — Persistent ingredient category overrides ✅
+
+Recategorizing an ingredient (e.g. moving "milk" from Pantry to Dairy)
+persists and applies going forward — every future week's grocery list,
+for every recipe using that ingredient — not just a one-time fix to
+what's on screen.
+
+- `ingredient_category_overrides` — a small table keyed on
+  `canonicalize_ingredient_name()`'s output (its first persisted
+  consumer), mapping a canonical ingredient name to a corrected
+  `store_category`.
+- Resolved inside `build_grocery_list()`'s own aggregation
+  (`services/grocery_list.py`'s `_accumulate()`, now `conn`-aware), not
+  by rewriting `recipe_ingredients` rows — the grocery list is never
+  cached, so this is already both retroactive and prospective with no
+  bulk `UPDATE` needed. A recipe-derived ingredient and a manual item
+  sharing a canonical name merge into one group under the override,
+  proven directly.
+- `services/category_overrides.py`: `get_override`/`set_override`
+  (upsert), `suggest_category_with_override()` (override first, else the
+  static dictionary — swapped into Add/Edit Recipe's two categorization
+  call sites so a correction also applies to a brand-new ingredient row
+  going forward, and structurally always wins over the AI 🤖 suggestion
+  since that only ever fires on a row still stuck on "other"), and
+  `detect_category_edits()` — the Grocery List page's diff-detection
+  logic, kept in this service module (not inline in the page) so it's
+  directly testable with plain dicts.
+- Grocery List screen: the on-page table became an `st.data_editor` with
+  the Category column a `SelectboxColumn` (everything else disabled) —
+  the realistic equivalent of the originally-suggested drag-and-drop,
+  which isn't a fit for this stack (no native drag-and-drop widget, and
+  a third-party component would be the first ever added here for
+  something with a first-party alternative available). A narrow,
+  deliberate exception to `docs/PRODUCT_SPEC.md` §11's "read-only" framing
+  — the "no check-off state, no shopping-mode UI" parts of that section
+  are unaffected and still hold.
+- **Testing limitation, confirmed not assumed:** `streamlit.testing.v1`'s
+  `Dataframe` proxy (what `st.data_editor` renders as) exposes only
+  `.value`, with no way to simulate a live cell edit — so the diff-
+  detection logic is tested directly as a pure function
+  (`detect_category_edits`) instead, and the AppTest-level coverage is
+  limited to confirming the page renders the editor with correct initial
+  data and never creates an override on its own.

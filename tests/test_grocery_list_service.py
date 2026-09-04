@@ -479,6 +479,94 @@ def test_build_grocery_list_manual_item_quantity_is_not_scaled(conn):
     assert result["dairy"][0].lines[0].quantity == 6
 
 
+# --- Milestone 17 Phase 2: persistent category overrides ---
+
+
+def test_build_grocery_list_applies_override_to_a_recipe_derived_ingredient(conn):
+    from services import category_overrides as override_service
+
+    recipe = make_recipe(
+        conn, "Pancakes", [{"name": "milk", "quantity": 200, "unit": "ml", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe)])
+    override_service.set_override(conn, "milk", "dairy")
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert "milk" not in [i.name.lower() for i in result.get("pantry", [])]
+    assert [i.name for i in result["dairy"]] == ["Milk"]
+
+
+def test_build_grocery_list_applies_override_to_a_manual_item(conn):
+    from services import category_overrides as override_service
+
+    week_plan_id = make_week_plan(conn, [("monday", None)])
+    grocery_items_service.add_item(
+        conn, week_plan_id=week_plan_id, name="milk", quantity=1, store_category="pantry"
+    )
+    override_service.set_override(conn, "milk", "dairy")
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [i.name for i in result["dairy"]] == ["Milk"]
+    assert "pantry" not in result
+
+
+def test_build_grocery_list_override_unifies_cross_source_items_sharing_canonical_name(conn):
+    """A recipe-derived ingredient (stored as 'pantry') and a manual item
+    sharing the same canonical name (stored as 'other') must merge into
+    ONE group under the override's category, not stay split by their
+    originally-stored categories -- proving the override is resolved
+    before the grouping key is formed, not as a later relabel."""
+    from services import category_overrides as override_service
+
+    recipe = make_recipe(
+        conn, "Pancakes", [{"name": "milk", "quantity": 200, "unit": "ml", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe)])
+    grocery_items_service.add_item(
+        conn, week_plan_id=week_plan_id, name="milk", quantity=100, unit="ml", store_category="other"
+    )
+    override_service.set_override(conn, "milk", "dairy")
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert set(result.keys()) == {"dairy"}
+    assert len(result["dairy"]) == 1
+    assert result["dairy"][0].lines[0].quantity == 300  # 200 + 100, merged into one group/line
+
+
+def test_build_grocery_list_override_change_does_not_touch_stored_recipe_ingredients_row(conn):
+    """The 'no retroactive bulk update' design: changing an override and
+    rebuilding the list must change the grouping without ever rewriting
+    the underlying recipe_ingredients row."""
+    from services import category_overrides as override_service
+
+    recipe = make_recipe(
+        conn, "Pancakes", [{"name": "milk", "quantity": 200, "unit": "ml", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe)])
+
+    before = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [i.name for i in before["pantry"]] == ["Milk"]
+
+    override_service.set_override(conn, "milk", "dairy")
+    after = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [i.name for i in after["dairy"]] == ["Milk"]
+    assert "pantry" not in after
+
+    stored_category = conn.execute(
+        "SELECT store_category FROM recipe_ingredients WHERE recipe_id = %s", (recipe,)
+    ).fetchone()[0]
+    assert stored_category == "pantry", "the override must not rewrite the stored row"
+
+
+def test_build_grocery_list_uses_stored_category_when_no_override_set(conn):
+    recipe = make_recipe(
+        conn, "Pancakes", [{"name": "milk", "quantity": 200, "unit": "ml", "store_category": "pantry"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe)])
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [i.name for i in result["pantry"]] == ["Milk"]
+
+
 # --- Ingredient name canonicalization (services/ingredient_canonicalization.py) ---
 # Regression tests using the real, messy raw ingredient-name strings found
 # in the dev DB during investigation (see docs/DECISIONS.md), not

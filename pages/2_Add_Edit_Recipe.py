@@ -19,6 +19,14 @@ Ingredient category suggestions are also optional AI Assist — see
 docs/AGENT_INSTRUCTIONS.md §6. Every AI-dependent control here simply
 doesn't appear when its backend isn't configured/reachable; the rest of
 this form (including URL import) works identically either way.
+
+Category suggestions on import go through
+`services.category_overrides.suggest_category_with_override()`, not
+`services.categorization.suggest_category()` directly — a persisted
+override (Milestone 17 Phase 2, set from the Grocery List screen) wins
+over the static dictionary here too, not just in the grocery list's own
+aggregation, so a corrected category also applies to a brand-new
+ingredient row going forward.
 """
 
 import concurrent.futures
@@ -27,8 +35,9 @@ import streamlit as st
 
 from database import get_connection
 from models import COURSES, SEASONALITIES, STORE_CATEGORIES
-from services import ai_assist, categorization, photos, recipe_import
+from services import ai_assist, photos, recipe_import
 from services.auth import require_password
+from services.category_overrides import suggest_category_with_override
 from services.ingredients import list_ingredients, replace_recipe_ingredients
 from services.recipes import create_recipe, get_recipe, update_recipe
 
@@ -110,7 +119,7 @@ def _apply_import_draft(draft: dict) -> None:
                 "name": ing["name"],
                 "quantity": "" if ing["quantity"] is None else str(ing["quantity"]),
                 "unit": ing["unit"] or "",
-                "store_category": categorization.suggest_category(ing["name"]) or "other",
+                "store_category": suggest_category_with_override(conn, ing["name"]) or "other",
             }
         )
     st.session_state["ingredient_rows"] = rows
@@ -252,9 +261,13 @@ st.subheader("Ingredients")
 
 if ai_available and st.session_state.get("import_happened"):
     if st.button("🤖 Auto-categorize ingredients"):
-        # Deterministic categorization (services/categorization.py) already
-        # ran on import, so only rows it couldn't place — still "other" —
-        # reach here. Suggestions run concurrently, not one-by-one: each is
+        # Deterministic categorization (an override, if one exists for this
+        # canonical ingredient — Milestone 17 Phase 2 — checked first, else
+        # services/categorization.py's static dictionary) already ran on
+        # import, so only rows neither could place — still "other" — reach
+        # here; a row an override already resolved never gets this far, so
+        # the override always wins over an AI suggestion with no extra
+        # logic needed. Suggestions run concurrently, not one-by-one: each is
         # an independent, short-timeout HTTP call (see
         # ai_assist._CATEGORY_SUGGESTION_TIMEOUT), so a batch's wall time is
         # bounded by the slowest single call instead of their sum — see

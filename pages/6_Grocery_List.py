@@ -1,22 +1,35 @@
 """
-Grocery List screen — a read-only, generated, grouped-by-category table
-for the current week plan, plus manual grocery items (Milestone 17):
-one-off items for this week only, and standing recurring items included
-every week. See docs/PRODUCT_SPEC.md §11 and docs/DECISIONS.md.
+Grocery List screen — a generated, grouped-by-category table for the
+current week plan, plus manual grocery items (Milestone 17): one-off
+items for this week only, and standing recurring items included every
+week. See docs/PRODUCT_SPEC.md §11 and docs/DECISIONS.md.
 
-Nothing here is persisted beyond the manual items themselves: the table
-is recomputed from the live plan_days + plan_day_dishes +
-recipe_ingredients + manual_grocery_items on every render (Milestone 16
-Phase 3 — each day's main *and* its attached sides/desserts; Milestone
-17 — every manual item), so it regenerates automatically when a day is
-swapped, an attachment changes, or a manual item is added/removed — no
-separate refresh step needed. No check-off state or shopping-mode UI, per
-docs/DECISIONS.md.
+Nothing here is persisted beyond the manual items and category overrides
+themselves: the table is recomputed from the live plan_days +
+plan_day_dishes + recipe_ingredients + manual_grocery_items +
+ingredient_category_overrides on every render (Milestone 16 Phase 3 —
+each day's main *and* its attached sides/desserts; Milestone 17 — every
+manual item and any persisted category correction), so it regenerates
+automatically when a day is swapped, an attachment changes, a manual
+item is added/removed, or a category is recategorized — no separate
+refresh step needed. Still no check-off state or shopping-mode UI, per
+docs/DECISIONS.md — recategorizing is a narrow, deliberate exception to
+"read-only," not a step toward either of those.
 
 Rendered as a table (Category / Ingredient / Quantity / Unit, one row per
-canonical ingredient+unit combination), not a bulleted list — see
-docs/DECISIONS.md. The same row data backs the "Download as Excel (.csv)"
-button below it (services.grocery_list.grocery_list_table_rows() /
+canonical ingredient+unit combination) via `st.data_editor` — only the
+Category cell is editable (a `SelectboxColumn`), everything else stays
+disabled/read-only. Recategorizing a row persists an
+`ingredient_category_overrides` entry (Milestone 17 Phase 2,
+`services.category_overrides`) keyed on that row's canonical ingredient
+name, applied by `build_grocery_list()` itself — not a rewrite of any
+`recipe_ingredients` row — so every recipe using that ingredient regroups
+correctly starting with the very next render, for every week, with
+nothing retroactive to run. See docs/DECISIONS.md for why drag-and-drop
+(the originally suggested interaction) isn't a fit for this stack, and
+why this achieves the same outcome. The same row data (before any
+in-progress, unsaved edit) backs the "Download as Excel (.csv)" button
+below it (services.grocery_list.grocery_list_table_rows() /
 grocery_list_csv()) — one underlying structure, two presentations.
 
 One-off and recurring items share a single paste-in-and-review flow
@@ -33,6 +46,7 @@ import streamlit as st
 from database import get_connection
 from models import STORE_CATEGORIES
 from services.auth import require_password
+from services.category_overrides import detect_category_edits, set_override
 from services.categorization import suggest_category
 from services.grocery_items import add_item, list_manual_items, parse_leading_quantity, remove_item
 from services.grocery_list import build_grocery_list, grocery_list_csv, grocery_list_table_rows
@@ -184,19 +198,37 @@ if not grocery_list:
     st.write("_No ingredients needed this week._")
 else:
     rows = grocery_list_table_rows(grocery_list)
-    st.dataframe(
-        [
-            {
-                "Category": row.category,
-                "Ingredient": row.ingredient,
-                "Quantity": row.quantity,
-                "Unit": row.unit,
-            }
-            for row in rows
-        ],
+    table_data = [
+        {
+            "Category": row.category,
+            "Ingredient": row.ingredient,
+            "Quantity": row.quantity,
+            "Unit": row.unit,
+        }
+        for row in rows
+    ]
+    st.caption("Recategorize an ingredient by changing its Category cell below.")
+    edited = st.data_editor(
+        table_data,
         hide_index=True,
         use_container_width=True,
+        num_rows="fixed",
+        disabled=["Ingredient", "Quantity", "Unit"],
+        column_config={
+            "Category": st.column_config.SelectboxColumn(
+                "Category",
+                options=[category.capitalize() for category in STORE_CATEGORIES],
+                required=True,
+            ),
+        },
+        key="grocery_table_editor",
     )
+    category_edits = detect_category_edits(table_data, edited)
+    for canonical_name, new_category in category_edits:
+        set_override(conn, canonical_name, new_category)
+    if category_edits:
+        st.rerun()
+
     st.download_button(
         "Download as Excel (.csv)",
         # utf-8-sig (a UTF-8 BOM) so Excel on Windows renders the "—"
