@@ -465,7 +465,7 @@ what's on screen.
   limited to confirming the page renders the editor with correct initial
   data and never creates an override on its own.
 
-## Milestone 18 — Shopping Mode 🚧
+## Milestone 18 — Shopping Mode ✅
 
 Reverses the 2026-08-31 "Grocery list is not a shopping-mode feature"
 decision — see docs/DECISIONS.md for the formal supersession entry.
@@ -489,21 +489,35 @@ Grocery List page's interaction model this changes.
   completion state). The manual-item paste-in/recurring sections are
   untouched by completion in this phase — recurring items in particular
   have no week dependency to gate on.
-- **Phase 2 — Checked-item state (not built yet):** a new
-  `grocery_checked_items` table keyed on `(week_plan_id, canonical_name,
-  unit)` — the grocery list's post-aggregation display identity, not a
-  source `recipe_ingredients` row, since a checked item may represent
-  several merged rows. `unit` stored as `TEXT NOT NULL DEFAULT ''`, never
+- **Phase 2 — Checked-item state ✅ done:** a new `grocery_checked_items`
+  table keyed on `(week_plan_id, canonical_name, unit)` — the grocery
+  list's post-aggregation display identity, not a source
+  `recipe_ingredients` row, since a checked item may represent several
+  merged rows. `unit` stored as `TEXT NOT NULL DEFAULT ''`, never
   `NULL` — a `UNIQUE` constraint over a nullable column doesn't reject
   duplicates in Postgres (`NULL` is never equal to `NULL`), which would
   have silently broken the upsert this table needs for the common
-  "no unit on this line" case. "Start Shopping" adds a `Checked`
-  `CheckboxColumn` to the existing `st.data_editor` (reusing the same
-  widget the Category override already uses); a checked row drops out of
-  the active view into a collapsed "Checked off (N)" section rendered
-  with `_render_manage_list()`'s existing list-plus-button pattern (a
-  plain "Restore" button, not a second data editor — restoring only ever
-  goes one direction). Export stays unaffected by checked state while a
-  trip is in progress (no new filtering logic), and disappears entirely
-  once completed via the same Phase 1 gate — no separate "disable
-  export" logic needed.
+  "no unit on this line" case — confirmed with a direct test that
+  repeatedly checking a no-unit item creates exactly one row, not
+  several. `check_item()`/`uncheck_item()` mirror `plan_day_dishes`'s
+  `attach_dish`/`detach_dish` shape (row presence = checked, no boolean
+  column). "Start Shopping" (a session-state-only toggle — no DB write,
+  so losing it costs nothing) adds a `Checked` `CheckboxColumn` to the
+  existing `st.data_editor` alongside the Category override's
+  `SelectboxColumn`, filtered to unchecked rows only; a checked row
+  drops into a collapsed "Checked off (N)" `st.expander` rendered with
+  `_render_manage_list()`'s existing list-plus-button pattern (a plain
+  "Restore" button, not a second data editor). Checked state confirmed
+  DB-backed with a direct test simulating a fresh session (a brand-new
+  `AppTest` reading only from the DB, no session-state carried over).
+  Export confirmed unaffected by checked state (`build_grocery_list()`'s
+  output proven identical before/after checking an item), and disappears
+  entirely once completed via the unchanged Phase 1 gate — no separate
+  "disable export" logic needed. `mark_shopping_completed()` confirmed to
+  leave `grocery_checked_items` rows alone; they simply don't match a
+  future week's `week_plan_id`, same convention as everything else in
+  this schema.
+- **Edge case found and handled:** `st.data_editor([])` renders with no
+  columns at all, not a recognizable empty table — a real, likely moment
+  (everything eventually gets checked off) that gets its own "Everything's
+  checked off!" message instead of a blank-looking grid.

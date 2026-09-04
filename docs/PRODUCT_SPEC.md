@@ -233,16 +233,17 @@ all seven days' recipes (summing quantities where units match).
   column is editable in place (recategorize an ingredient by changing its
   cell), persisting going forward as an `ingredient_category_overrides`
   entry. See docs/DECISIONS.md.
-- **Shopping mode (Milestone 18):** "Start Shopping" switches the table
-  into a checkbox view; checking an item off hides it from the active
-  list into a collapsed "Checked off (N)" section it can be restored
-  from without leaving shopping mode; "Finish Shopping" marks the week's
-  trip complete (`week_plans.shopping_completed_at`), after which this
-  whole list-and-export section reads as empty until a new week plan is
-  generated. Checked-item state is DB-backed, not session state, so it
-  survives a closed tab or an app reboot mid-trip. **Phase 1 shipped:**
-  the completion flag, "Finish Shopping," and the empty-state gate — no
-  checkbox UI yet (Phase 2). See docs/DATA_MODEL.md and docs/DECISIONS.md.
+- **Shopping mode (Milestone 18, both phases shipped):** "Start Shopping"
+  switches the table into a checkbox view; checking an item off hides it
+  from the active list into a collapsed "Checked off (N)" section it can
+  be restored from without leaving shopping mode; "Finish Shopping" marks
+  the week's trip complete (`week_plans.shopping_completed_at`), after
+  which this whole list-and-export section reads as empty until a new
+  week plan is generated. Checked-item state is DB-backed
+  (`grocery_checked_items`), not session state, so it survives a closed
+  tab or an app reboot mid-trip — only the Start/Stop Shopping view
+  toggle itself is session state, since losing it costs nothing. See
+  docs/DATA_MODEL.md and docs/DECISIONS.md.
 
 ### Household-size scaling (Milestone 14)
 

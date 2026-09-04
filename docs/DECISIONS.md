@@ -2620,3 +2620,67 @@ handles keyless buttons at the framework level) surfaced a real
 `.key.startswith(...)` unconditionally, since AppTest reports a keyless
 button's `.key` as `None`. Fixed by matching this page's own established
 convention rather than adding a None-guard to the two affected tests.
+
+## 2026-09-04 — Milestone 18 Phase 2: checked-item state, closing out shopping mode
+
+**`grocery_checked_items` built exactly as designed in the investigation,
+confirmed rather than re-litigated at implementation time.** Keyed on
+`(week_plan_id, canonical_name, unit)` — the grocery list's own
+post-aggregation display identity — with `unit` stored as
+`TEXT NOT NULL DEFAULT ''`, never `NULL`. Confirmed directly with a test
+that repeatedly checks a no-unit item three different ways (twice with
+`unit=""` explicitly, once relying on the default) and asserts exactly
+one row exists — proving the `NULL`-uniqueness gap the Phase 2
+investigation flagged is actually closed, not just designed around on
+paper.
+
+**`check_item()`/`uncheck_item()` mirror `attach_dish()`/`detach_dish()`
+exactly, including keeping their own `conn.commit()` calls** (unlike
+`attach_dish`/`detach_dish`, which deliberately have none because
+`generate_week_plan()` calls them from inside an open
+`with conn.transaction():` block). Nothing calls `check_item`/
+`uncheck_item` from inside a transaction — only the Grocery List page,
+directly — so the normal-for-this-codebase explicit `commit()` is correct
+here and the `attach_dish`-style omission would have been copying the
+wrong half of that precedent.
+
+**A real UI edge case found and fixed, not left as a rough edge:**
+`st.data_editor([])` — what the active editor becomes once every item on
+a short list is checked off — renders with *no columns at all*, not a
+recognizable empty table. Discovered while writing the "check the only
+item on a two-item list" test, which failed with a `KeyError` on a
+column that should have existed but didn't, because the editor had
+nothing to infer columns from. Fixed with an explicit
+`if not active_rows:` branch showing "Everything's checked off! Click
+Finish Shopping when you're done." instead of calling `st.data_editor`
+on an empty list — a real, likely-to-happen moment (finishing a trip
+naturally means checking off everything) that would otherwise have
+looked broken right at the end of the flow.
+
+**DB-backed checked state confirmed with the test that actually matters,
+not just the write path.** `test_checked_state_persists_across_a_fresh_session`
+checks an item via a direct service call (standing in for "a previous
+session wrote this"), then loads the Grocery List page in a *brand-new*
+`AppTest` instance — a different Python object with its own empty
+session state — and confirms the item still shows up checked. This is
+the property the whole DB-backed-vs-session-state design decision from
+the Phase 2 proposal rested on; testing only the check/uncheck write
+calls would have left that specific claim unverified.
+
+**Confirmed, not assumed: `mark_shopping_completed()` needs no
+`grocery_checked_items` cleanup.** A completed week's checked rows stay
+in the table, scoped to that `week_plan_id` — proven with a test that
+checks an item, completes the week, and asserts the checked-item row is
+still there afterward (not deleted) while a *new* week's
+`list_checked_items()` comes back empty. Same "never hard-delete, scope
+by week_plan_id" convention as every other table in this schema.
+
+**Export confirmed unaffected by checked state, proven at the function
+level, not just by inspection.** `build_grocery_list()`'s returned dict
+is asserted identical before and after checking an item off — the
+service function has no `import` of or reference to
+`services.shopping_mode` at all, so this was expected, but the Phase 2
+task explicitly asked to confirm rather than assume it, and pure code
+inspection doesn't prove a runtime dict came back byte-for-byte the same.
+
+Milestone 18 (Shopping Mode) is now fully complete — both phases done.

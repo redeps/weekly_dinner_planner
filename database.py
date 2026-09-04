@@ -242,6 +242,31 @@ SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         # a default value.
         "ALTER TABLE week_plans ADD COLUMN IF NOT EXISTS shopping_completed_at TEXT",
     ),
+    (
+        15,
+        # Milestone 18 Phase 2 — which grocery-list lines are checked off
+        # for a week. Keyed on the list's own post-aggregation display
+        # identity (canonical name + unit), not a source
+        # recipe_ingredients row — a checked "milk" might represent
+        # several merged rows (see docs/DECISIONS.md). Row presence =
+        # checked, no boolean column, mirroring plan_day_dishes's
+        # attach_dish/detach_dish shape. `unit` is NOT NULL DEFAULT '',
+        # never NULL: a UNIQUE constraint over a nullable column doesn't
+        # reject duplicates in Postgres (NULL is never equal to NULL),
+        # which would silently break the upsert this table needs for the
+        # common "no unit on this line" case — confirmed directly during
+        # the investigation, not assumed.
+        f"""
+        CREATE TABLE IF NOT EXISTS grocery_checked_items (
+            id SERIAL PRIMARY KEY,
+            week_plan_id INTEGER NOT NULL REFERENCES week_plans(id) ON DELETE CASCADE,
+            canonical_name TEXT NOT NULL,
+            unit TEXT NOT NULL DEFAULT '',
+            checked_at TEXT NOT NULL DEFAULT {_NOW_EXPR},
+            UNIQUE (week_plan_id, canonical_name, unit)
+        )
+        """,
+    ),
 ]
 
 _EXPORT_TABLES = [
@@ -255,6 +280,7 @@ _EXPORT_TABLES = [
     "plan_day_dishes",
     "manual_grocery_items",
     "ingredient_category_overrides",
+    "grocery_checked_items",
 ]
 
 

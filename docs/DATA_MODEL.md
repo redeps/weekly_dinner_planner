@@ -14,8 +14,8 @@ Milestone 7 introduces `cook_history`. Milestone 14 introduces
 introduces `recipes.course` and `plan_day_dishes` (all 4 phases complete
 — see `docs/ROADMAP.md`). Milestone 17 introduces `manual_grocery_items`
 (Phase 1) and `ingredient_category_overrides` (Phase 2). Milestone 18
-introduces `week_plans.shopping_completed_at` (Phase 1 so far; Phase 2
-will add a `grocery_checked_items` table).
+introduces `week_plans.shopping_completed_at` (Phase 1) and
+`grocery_checked_items` (Phase 2) — both phases complete.
 
 ## RECIPES
 
@@ -174,6 +174,39 @@ mechanism.
 | created_at     | timestamp |                                                   |
 | updated_at     | timestamp |                                                   |
 
+## GROCERY_CHECKED_ITEMS
+
+Milestone 18 Phase 2. Which grocery-list lines are checked off for a
+week's shopping trip. Keyed on the list's own post-aggregation display
+identity (`canonical_name` + `unit`), not a source `recipe_ingredients`
+row — a single checked "milk" line may represent several merged rows
+(same canonicalization as `services/ingredient_canonicalization.py`
+already uses for grouping). Row presence = checked, no boolean column,
+same shape as `plan_day_dishes`'s attach/detach pattern.
+
+`unit` is `TEXT NOT NULL DEFAULT ''`, deliberately never `NULL`: a
+`UNIQUE` constraint over a nullable column doesn't reject duplicates in
+Postgres (`NULL` is never equal to `NULL`), which would silently break
+the `ON CONFLICT` upsert this table needs for the common "no unit on
+this line" case — confirmed directly during the Phase 2 investigation,
+not assumed.
+
+Scoped by `week_plan_id` like every other per-week table in this
+schema — a completed week's checked items are left alone (not cleaned
+up) when `week_plans.shopping_completed_at` is set; they simply never
+match a future week's `week_plan_id`.
+
+| column         | type      | notes                                            |
+|----------------|-----------|------------------------------------------------------|
+| id             | integer PK |                                                       |
+| week_plan_id   | integer FK → week_plans.id, `ON DELETE CASCADE` |                   |
+| canonical_name | text      |                                                       |
+| unit           | text      | `NOT NULL DEFAULT ''` — never `NULL`, see above       |
+| checked_at     | timestamp |                                                       |
+
+`UNIQUE(week_plan_id, canonical_name, unit)` — a line can't be checked
+twice.
+
 ## APP_SETTINGS
 
 Milestone 14. A single row (`id = 1`), the same one-row pattern as
@@ -276,6 +309,9 @@ WEEK_PLANS ──< MANUAL_GROCERY_ITEMS   (week_plan_id nullable: NULL rows
                                         are recurring, matched by every
                                         week, not just the one they'd
                                         otherwise belong to)
+
+WEEK_PLANS ──< GROCERY_CHECKED_ITEMS   (which lines are checked off for
+                                         that week's shopping trip)
 
 APP_SETTINGS  (standalone — no foreign keys; a single global-config row)
 ```
