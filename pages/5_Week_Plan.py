@@ -7,6 +7,13 @@ see that page's docstring and docs/DECISIONS.md. This page only ever reads
 the latest week plan and offers post-generation actions (swap, finalize,
 email, cook).
 
+Each day's attached sides/desserts (Milestone 16 Phase 2,
+`services.plan_generation.list_dishes`) are shown read-only below the
+main recipe — Weekly Calendar remains the sole place to attach or remove
+them, same as household size and special-occasion assignment. Swapping a
+day's main here never touches its attachments (`swap_day_recipe()` only
+ever updates `plan_days.recipe_id`).
+
 The optional swap-intent hint (AI Assist, docs/AGENT_INSTRUCTIONS.md §6)
 just doesn't appear when Ollama isn't reachable — Swap always works with
 or without it.
@@ -20,7 +27,12 @@ from services import ai_assist, photos
 from services.auth import require_password
 from services.cook_history import finalize_plan, has_been_cooked, mark_day_cooked
 from services.email import SmtpConnectionError, list_recipients, send_weekly_plan_email
-from services.plan_generation import get_latest_week_plan, list_plan_days, swap_day_recipe
+from services.plan_generation import (
+    get_latest_week_plan,
+    list_dishes,
+    list_plan_days,
+    swap_day_recipe,
+)
 from services.recipes import get_recipe
 
 st.set_page_config(page_title="Week Plan — Meal Planner", page_icon="🍽️")
@@ -95,6 +107,17 @@ for plan_day in list_plan_days(conn, week_plan.id):
             cols[1].caption(
                 f"{recipe.cook_time_minutes} min · dinner ready {plan_day.dinner_ready_time}"
             )
+
+            # Milestone 16 Phase 2: attached side dishes/dessert, read-only
+            # here — Weekly Calendar remains the only place these are
+            # attached or removed, same as the main recipe's household
+            # size and special-occasion assignment. Detach/edit actions
+            # here are a possible follow-up, not built in this phase.
+            dishes = list_dishes(conn, plan_day.id)
+            if dishes:
+                cols[1].caption(
+                    " · ".join(f"{dish.course.capitalize()}: {dish.name}" for dish in dishes)
+                )
 
             with st.expander("Actions"):
                 action_cols = st.columns(3)

@@ -2,15 +2,17 @@
 Weekly Calendar Input screen — a 7-day busy toggle + dinner-ready time
 form, plus the global default household size, an optional per-day
 household-size override for days you're hosting or cooking for more than
-usual, an optional per-day direct assignment of a special-occasion recipe,
-and the "Generate New Plan" action that carries all of the above into a
-new week plan. See docs/PRODUCT_SPEC.md §7 and §15.
+usual, an optional per-day direct assignment of a special-occasion
+recipe, optional per-day side-dish/dessert attachments (Milestone 16
+Phase 2), and the "Generate New Plan" action that carries all of the
+above into a new week plan. See docs/PRODUCT_SPEC.md §7 and §15.
 
 Not database-backed: the calendar is re-entered each time rather than
 persisted per week — see docs/DECISIONS.md. `generate_week_plan()` carries
-these values into `plan_days` when a week plan is generated. The default
-household size is the one exception that IS persisted (`app_settings`,
-see services/settings.py) — it's a standing setting, not a per-week input.
+these values into `plan_days` (and, for side/dessert attachments,
+`plan_day_dishes`) when a week plan is generated. The default household
+size is the one exception that IS persisted (`app_settings`, see
+services/settings.py) — it's a standing setting, not a per-week input.
 
 Every gated (yes/no -> multiselect -> per-day widget) section on this page
 computes its yes/no radio's `index=` and its multiselect's `default=` from
@@ -18,11 +20,17 @@ computes its yes/no radio's `index=` and its multiselect's `default=` from
 the radio/multiselect's own widget-level session state alone — navigating
 to another page and back can silently drop that widget state, and without
 a computed default the gate falls back to "No" and the section's own
-rebuild (right after the special-occasion section, so the Generate button
-below it sees fresh values) then overwrites still-correct values with
-None. The busy/dinner-time inputs above were never affected, since they're
-rendered unconditionally every run and already compute their `value=` from
-the durable list. See docs/DECISIONS.md.
+rebuild (right after the last gated section, so the Generate button below
+it sees fresh values) then overwrites still-correct values with None. The
+busy/dinner-time inputs above were never affected, since they're rendered
+unconditionally every run and already compute their `value=` from the
+durable list. See docs/DECISIONS.md. The Side dishes and Dessert sections
+share one helper (`_render_dish_attachment_section`) since they're
+identical apart from the course filter and labels — each writes its own
+entry (`side_recipe_ids`/`dessert_recipe_ids`) into that same rebuild,
+independently of every other section's fields, so none of them can clobber
+each other (the exact bug class the household-size override already hit
+once — see docs/DECISIONS.md).
 
 Generation itself lives here rather than on the Week Plan screen (moved
 after Milestone 15) — this page is the single place all pre-generation
@@ -47,6 +55,77 @@ from services.settings import get_default_household_size, set_default_household_
 
 st.set_page_config(page_title="Weekly Calendar — Meal Planner", page_icon="🍽️")
 require_password()
+
+
+def _render_dish_attachment_section(
+    *,
+    conn,
+    calendar_by_day: dict,
+    course: str,
+    attr_name: str,
+    section_title: str,
+    week_question: str,
+    key_prefix: str,
+) -> dict:
+    """Week-gated (yes/no -> which day(s) -> per-day multiselect of
+    matching-course recipes) attachment picker — shared by the Side
+    dishes and Dessert sections below, since they're identical apart
+    from the course filter and labels. Symmetric multi-select for both:
+    a day can have several sides *or* several desserts, same reasoning
+    (see docs/DECISIONS.md). Mirrors the household-size/special-occasion
+    sections' computed-default pattern (module docstring) so navigating
+    away and back doesn't drop a day's attachments. Hidden entirely if
+    no active recipe of this course exists yet, same as the
+    special-occasion section."""
+    course_recipes = list_recipes(conn, course=course)
+    if not course_recipes:
+        return {}
+
+    st.divider()
+    st.subheader(section_title)
+
+    days_with_attachment = [
+        day_name for day_name in DAYS_OF_WEEK
+        if getattr(calendar_by_day[day_name], attr_name)
+    ]
+
+    hosting_this_week = st.radio(
+        week_question,
+        ("No", "Yes"),
+        index=1 if days_with_attachment else 0,
+        key=f"{key_prefix}_this_week",
+    )
+
+    attached_by_day: dict = {}
+    if hosting_this_week == "Yes":
+        chosen_days = st.multiselect(
+            "Which day(s)?",
+            DAYS_OF_WEEK,
+            default=days_with_attachment,
+            format_func=lambda day_name: day_name.capitalize(),
+            key=f"{key_prefix}_days",
+        )
+        recipe_names_by_id = {r.id: r.name for r in course_recipes}
+        options = [r.id for r in course_recipes]
+        for day_name in chosen_days:
+            cols = st.columns([2, 2])
+            cols[0].write(f"**{day_name.capitalize()}**")
+            existing = [
+                rid for rid in getattr(calendar_by_day[day_name], attr_name)
+                if rid in recipe_names_by_id
+            ]
+            chosen_ids = cols[1].multiselect(
+                "Recipes",
+                options=options,
+                default=existing,
+                format_func=lambda rid: recipe_names_by_id[rid],
+                key=f"{key_prefix}_{day_name}",
+            )
+            if chosen_ids:
+                attached_by_day[day_name] = chosen_ids
+
+    return attached_by_day
+
 
 conn = get_connection()
 
@@ -169,6 +248,26 @@ if special_occasion_recipes:
             if chosen_recipe_id is not None:
                 assigned_recipe_by_day[day_name] = chosen_recipe_id
 
+side_dish_by_day = _render_dish_attachment_section(
+    conn=conn,
+    calendar_by_day=calendar_by_day,
+    course="side",
+    attr_name="side_recipe_ids",
+    section_title="Side dishes",
+    week_question="Any days this week you want to add a side dish?",
+    key_prefix="side_dish",
+)
+
+dessert_by_day = _render_dish_attachment_section(
+    conn=conn,
+    calendar_by_day=calendar_by_day,
+    course="dessert",
+    attr_name="dessert_recipe_ids",
+    section_title="Desserts",
+    week_question="Any days this week you want to add a dessert?",
+    key_prefix="dessert",
+)
+
 st.session_state["weekly_calendar"] = [
     CalendarDay(
         day_of_week=day_name,
@@ -176,6 +275,8 @@ st.session_state["weekly_calendar"] = [
         dinner_ready_time=busy_and_time_by_day[day_name][1],
         household_size_override=household_override_by_day.get(day_name),
         assigned_recipe_id=assigned_recipe_by_day.get(day_name),
+        side_recipe_ids=side_dish_by_day.get(day_name, []),
+        dessert_recipe_ids=dessert_by_day.get(day_name, []),
     )
     for day_name in DAYS_OF_WEEK
 ]

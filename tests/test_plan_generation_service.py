@@ -548,6 +548,185 @@ def test_generate_week_plan_assignment_does_not_consume_a_slot_or_force_repeat(c
     assert other_ids <= {r.id for r in regulars}, "auto-generated days drew only from the regular pool"
 
 
+# --- plan_day_dishes: attach_dish / detach_dish / list_dishes (Milestone 16 Phase 2) ---
+
+
+def _make_plan_day(conn):
+    make_recipe(conn, name="Main")
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(0)
+    )
+    return plan_service.list_plan_days(conn, week_plan_id)[0]
+
+
+def test_attach_dish_creates_attachment(conn):
+    plan_day = _make_plan_day(conn)
+    side = make_recipe(conn, name="Salad", course="side")
+    plan_service.attach_dish(conn, plan_day.id, side.id)
+    assert [d.id for d in plan_service.list_dishes(conn, plan_day.id)] == [side.id]
+
+
+def test_attach_dish_is_a_noop_when_already_attached(conn):
+    """UNIQUE(plan_day_id, recipe_id) must not surface as a raised
+    constraint violation -- attaching an already-attached recipe is a
+    clean no-op (ON CONFLICT DO NOTHING)."""
+    plan_day = _make_plan_day(conn)
+    side = make_recipe(conn, name="Salad", course="side")
+    plan_service.attach_dish(conn, plan_day.id, side.id)
+    plan_service.attach_dish(conn, plan_day.id, side.id)  # must not raise
+    assert [d.id for d in plan_service.list_dishes(conn, plan_day.id)] == [side.id]
+
+
+def test_detach_dish_removes_attachment(conn):
+    plan_day = _make_plan_day(conn)
+    side = make_recipe(conn, name="Salad", course="side")
+    plan_service.attach_dish(conn, plan_day.id, side.id)
+    plan_service.detach_dish(conn, plan_day.id, side.id)
+    assert plan_service.list_dishes(conn, plan_day.id) == []
+
+
+def test_detach_dish_is_a_noop_when_not_attached(conn):
+    plan_day = _make_plan_day(conn)
+    side = make_recipe(conn, name="Salad", course="side")
+    plan_service.detach_dish(conn, plan_day.id, side.id)  # must not raise
+    assert plan_service.list_dishes(conn, plan_day.id) == []
+
+
+def test_list_dishes_filters_by_course(conn):
+    plan_day = _make_plan_day(conn)
+    side = make_recipe(conn, name="Salad", course="side")
+    dessert = make_recipe(conn, name="Crumble", course="dessert")
+    plan_service.attach_dish(conn, plan_day.id, side.id)
+    plan_service.attach_dish(conn, plan_day.id, dessert.id)
+
+    assert [d.id for d in plan_service.list_dishes(conn, plan_day.id, course="side")] == [side.id]
+    assert [d.id for d in plan_service.list_dishes(conn, plan_day.id, course="dessert")] == [dessert.id]
+    assert {d.id for d in plan_service.list_dishes(conn, plan_day.id)} == {side.id, dessert.id}
+
+
+def test_list_dishes_ordered_by_name(conn):
+    plan_day = _make_plan_day(conn)
+    z = make_recipe(conn, name="Zucchini Salad", course="side")
+    a = make_recipe(conn, name="Apple Coleslaw", course="side")
+    plan_service.attach_dish(conn, plan_day.id, z.id)
+    plan_service.attach_dish(conn, plan_day.id, a.id)
+    assert [d.name for d in plan_service.list_dishes(conn, plan_day.id)] == [
+        "Apple Coleslaw", "Zucchini Salad",
+    ]
+
+
+def test_attaching_the_same_recipe_to_two_different_days_is_independent(conn):
+    make_recipe(conn, name="Main")
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=default_calendar(), rng=random.Random(0)
+    )
+    days = plan_service.list_plan_days(conn, week_plan_id)
+    side = make_recipe(conn, name="Salad", course="side")
+    plan_service.attach_dish(conn, days[0].id, side.id)
+    assert [d.id for d in plan_service.list_dishes(conn, days[0].id)] == [side.id]
+    assert plan_service.list_dishes(conn, days[1].id) == []
+
+
+# --- generate_week_plan: side/dessert attachment via CalendarDay (Milestone 16 Phase 2) ---
+
+
+def test_generate_week_plan_attaches_staged_sides_and_desserts(conn):
+    make_recipe(conn, name="Main")
+    side = make_recipe(conn, name="Salad", course="side")
+    dessert = make_recipe(conn, name="Crumble", course="dessert")
+
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["monday"].side_recipe_ids = [side.id]
+    calendar_by_day["monday"].dessert_recipe_ids = [dessert.id]
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(0)
+    )
+    days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+    monday_dishes = {d.id for d in plan_service.list_dishes(conn, days["monday"].id)}
+    assert monday_dishes == {side.id, dessert.id}
+    assert plan_service.list_dishes(conn, days["tuesday"].id) == []
+
+
+def test_generate_week_plan_supports_multiple_sides_on_one_day(conn):
+    make_recipe(conn, name="Main")
+    salad = make_recipe(conn, name="Salad", course="side")
+    pudding = make_recipe(conn, name="Yorkshire Pudding", course="side")
+
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["sunday"].side_recipe_ids = [salad.id, pudding.id]
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(0)
+    )
+    days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+    sunday_names = {d.name for d in plan_service.list_dishes(conn, days["sunday"].id)}
+    assert sunday_names == {"Salad", "Yorkshire Pudding"}
+
+
+def test_generate_week_plan_skips_deactivated_staged_dish_without_failing(conn):
+    make_recipe(conn, name="Main")
+    side = make_recipe(conn, name="Salad", course="side")
+    recipe_service.deactivate_recipe(conn, side.id)
+
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["monday"].side_recipe_ids = [side.id]
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(0)
+    )
+    days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+    assert plan_service.list_dishes(conn, days["monday"].id) == []  # skipped, not raised
+
+
+def test_generate_week_plan_skips_missing_staged_dish_without_failing(conn):
+    make_recipe(conn, name="Main")
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["monday"].side_recipe_ids = [999999]  # no such recipe
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(0)
+    )
+    days = {d.day_of_week: d for d in plan_service.list_plan_days(conn, week_plan_id)}
+    assert plan_service.list_dishes(conn, days["monday"].id) == []
+
+
+# --- swap_day_recipe: attachments survive a main-recipe swap ---
+# (Milestone 16 Phase 2 regression -- proving the Phase 1 investigation's
+# finding that swap_day_recipe() only ever updates plan_days.recipe_id,
+# rather than continuing to trust that analysis without a direct test.)
+
+
+def test_swap_day_recipe_leaves_plan_day_dishes_untouched(conn):
+    for i in range(3):
+        make_recipe(conn, name=f"Main {i}")
+    side = make_recipe(conn, name="Salad", course="side")
+
+    calendar = default_calendar()
+    calendar_by_day = {d.day_of_week: d for d in calendar}
+    calendar_by_day["monday"].side_recipe_ids = [side.id]
+
+    week_plan_id = plan_service.generate_week_plan(
+        conn, week_start_date=dt.date(2026, 8, 31), calendar=calendar, rng=random.Random(0)
+    )
+    monday = next(
+        d for d in plan_service.list_plan_days(conn, week_plan_id) if d.day_of_week == "monday"
+    )
+    assert [d.id for d in plan_service.list_dishes(conn, monday.id)] == [side.id]
+
+    original_main_id = monday.recipe_id
+    result = plan_service.swap_day_recipe(conn, monday.id, rng=random.Random(1))
+    assert result.id != original_main_id  # swap excludes the current recipe -- it did change
+
+    assert [d.id for d in plan_service.list_dishes(conn, monday.id)] == [side.id], (
+        "swapping a day's main recipe must not touch its plan_day_dishes attachments"
+    )
+
+
 def test_generate_week_plan_allows_repeats_when_recipe_pool_too_small(conn):
     make_recipe(conn, name="Only One")
     week_plan_id = plan_service.generate_week_plan(

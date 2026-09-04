@@ -11,7 +11,7 @@ Milestone 1 introduces `recipes`. Milestone 2 introduces
 `recipe_ingredients`. Milestone 4 introduces `week_plans` and `plan_days`.
 Milestone 7 introduces `cook_history`. Milestone 14 introduces
 `app_settings` and `plan_days.household_size_override`. Milestone 16
-introduces `recipes.course` and `plan_day_dishes` (Phase 1 so far — see
+introduces `recipes.course` and `plan_day_dishes` (Phases 1-2 so far — see
 `docs/ROADMAP.md`).
 
 ## RECIPES
@@ -88,8 +88,10 @@ desserts, not two separate tables. No `course` column here: which course
 an attached recipe is comes from joining to `recipes.course` — storing it
 again on this row would duplicate a property of the recipe, not of the
 attachment, and risk drifting if a recipe's course is edited later. Manual
-attach only in v1 (Phase 2, not yet built as of Phase 1) — automatic plan
-generation never writes to this table.
+attach only — automatic plan generation never scores or auto-assigns a
+side/dessert, though `generate_week_plan()` does write rows here for
+whatever a day's calendar input already staged (see
+`services/plan_generation.py`'s `attach_dish()` and docs/DECISIONS.md).
 
 | column       | type      | notes                                                |
 |--------------|-----------|----------------------------------------------------------|

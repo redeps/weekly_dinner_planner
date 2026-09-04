@@ -7,7 +7,7 @@ See docs/DATA_MODEL.md for the full schema.
 """
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 SEASONALITIES = ("winter", "spring", "summer", "fall", "all-season")
@@ -57,13 +57,21 @@ class Ingredient:
 @dataclass
 class CalendarDay:
     """A single day's plan-generation input. Not database-backed yet — see
-    docs/DECISIONS.md — Milestone 4 carries these into `plan_days`."""
+    docs/DECISIONS.md — Milestone 4 carries these into `plan_days`.
+    `side_recipe_ids`/`dessert_recipe_ids` (Milestone 16) are carried into
+    `plan_day_dishes` the same way — two staging fields, not one merged
+    list, even though `plan_day_dishes` itself has no course column;
+    keeping them separate here matches the two distinct picker sections
+    on the Weekly Calendar screen and avoids re-deriving "which of these
+    ids are sides" from a recipe lookup on every rerun."""
 
     day_of_week: str
     is_busy: bool
     dinner_ready_time: dt.time
     household_size_override: Optional[int] = None
     assigned_recipe_id: Optional[int] = None
+    side_recipe_ids: list[int] = field(default_factory=list)
+    dessert_recipe_ids: list[int] = field(default_factory=list)
 
 
 @dataclass

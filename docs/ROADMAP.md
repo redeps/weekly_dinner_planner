@@ -336,12 +336,19 @@ investigation this milestone is based on.
   course filter and course badge on Recipes browsing; `list_recipes()`
   gains an optional `course` filter. No plan/grocery/cook-mode behavior
   changes yet — fully testable in isolation.
-- **Phase 2 — Weekly Calendar attach UI + Week Plan display:** two new
-  week-gated sections on the Weekly Calendar screen (yes/no -> which
-  day(s) -> per-day multiselect of that course's recipes), symmetric
-  multi-select for both sides and desserts (no concrete reason found for
-  single-select on desserts). A new attach/detach/list service. Week Plan
-  renders each day's attached dishes alongside its main.
+- **Phase 2 — Weekly Calendar attach UI + Week Plan display ✅ done:**
+  two new week-gated sections on the Weekly Calendar screen (yes/no ->
+  which day(s) -> per-day multiselect of that course's recipes), sharing
+  one UI helper; symmetric multi-select for both sides and desserts (no
+  concrete reason found for single-select on desserts). `attach_dish()`/
+  `detach_dish()`/`list_dishes()` added to `services/plan_generation.py`
+  (the existing home for plan-day CRUD, not a new module). Attachments
+  are staged on `CalendarDay` and carried into `plan_day_dishes` by
+  `generate_week_plan()` the same way `assigned_recipe_id` already is —
+  not written directly, since a `plan_day_id` doesn't exist until
+  generation creates it. Week Plan renders each day's attached dishes
+  read-only below its main; swapping a day's main leaves its attachments
+  untouched (regression-tested).
 - **Phase 3 — Grocery List aggregation:** extend `build_grocery_list()`
   to aggregate ingredients from every attached dish per day, not just the
   main — confirmed to need no new scaling/canonicalization logic, since

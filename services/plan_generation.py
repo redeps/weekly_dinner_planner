@@ -218,6 +218,16 @@ def generate_week_plan(
     week's overlap scoring, by construction, not by filtering them out
     afterward. `swap_day_recipe` does not get this treatment at all —
     see its own docstring.
+
+    Side/dessert attachments (Milestone 16, `CalendarDay.side_recipe_ids`/
+    `dessert_recipe_ids`) are staged the same way `assigned_recipe_id` is
+    and carried into `plan_day_dishes` via `attach_dish()` right after
+    each day's `plan_days` row is inserted, inside the same transaction.
+    Never scored, never part of the automatic pool above — manual-attach
+    only, same reasoning as special-occasion recipes. A recipe deactivated
+    between calendar input and generation time is silently skipped for
+    that day rather than failing the whole plan, same as a stale
+    `assigned_recipe_id` above.
     """
     rng = rng or random.Random()
     recipes = [r for r in list_recipes(conn) if not r.is_special_occasion]
@@ -282,12 +292,13 @@ def generate_week_plan(
                     - staple_canonical_ingredients
                 )
 
-            conn.execute(
+            plan_day_id = conn.execute(
                 """
                 INSERT INTO plan_days (
                     week_plan_id, day_of_week, date, is_busy, dinner_ready_time, recipe_id,
                     household_size_override
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (
                     week_plan_id,
@@ -298,7 +309,19 @@ def generate_week_plan(
                     chosen_id,
                     cal_day.household_size_override,
                 ),
-            )
+            ).fetchone()[0]
+
+            # Side/dessert attachments (Milestone 16) are staged on the
+            # calendar the same way assigned_recipe_id is, and carried
+            # into plan_day_dishes here — never scored/auto-assigned, and
+            # subject to the same staleness check as assigned_recipe_id
+            # above: a recipe deactivated between calendar input and
+            # generation is silently skipped rather than failing the
+            # whole plan.
+            for dish_recipe_id in (*cal_day.side_recipe_ids, *cal_day.dessert_recipe_ids):
+                dish_recipe = get_recipe(conn, dish_recipe_id)
+                if dish_recipe is not None and dish_recipe.active:
+                    attach_dish(conn, plan_day_id, dish_recipe_id)
 
     return week_plan_id
 
@@ -352,6 +375,62 @@ def get_plan_day(conn: psycopg.Connection, plan_day_id: int) -> Optional[PlanDay
         "SELECT * FROM plan_days WHERE id = %s", (plan_day_id,)
     ).fetchone()
     return _row_to_plan_day(row) if row else None
+
+
+def attach_dish(conn: psycopg.Connection, plan_day_id: int, recipe_id: int) -> None:
+    """Attach a side/dessert recipe to a plan day (Milestone 16). A no-op,
+    not a raised constraint violation, if that recipe is already attached
+    to that day (`UNIQUE(plan_day_id, recipe_id)` — see docs/DATA_MODEL.md)
+    — `ON CONFLICT DO NOTHING` rather than a pre-check-then-insert.
+
+    Deliberately has no explicit `conn.commit()`, unlike most service
+    functions in this codebase: `generate_week_plan()` calls this from
+    inside its own `with conn.transaction():` block, and psycopg raises
+    if `commit()` is called while one of those is open (confirmed
+    directly, not assumed — see docs/DECISIONS.md). Standalone calls are
+    still durable immediately regardless, since `autocommit=True`
+    (docs/DECISIONS.md) commits every statement on its own.
+    """
+    conn.execute(
+        """
+        INSERT INTO plan_day_dishes (plan_day_id, recipe_id)
+        VALUES (%s, %s)
+        ON CONFLICT (plan_day_id, recipe_id) DO NOTHING
+        """,
+        (plan_day_id, recipe_id),
+    )
+
+
+def detach_dish(conn: psycopg.Connection, plan_day_id: int, recipe_id: int) -> None:
+    """Detach a recipe from a plan day (Milestone 16). A no-op if it
+    wasn't attached. See `attach_dish` for why there's no explicit
+    `conn.commit()` here either."""
+    conn.execute(
+        "DELETE FROM plan_day_dishes WHERE plan_day_id = %s AND recipe_id = %s",
+        (plan_day_id, recipe_id),
+    )
+
+
+def list_dishes(
+    conn: psycopg.Connection, plan_day_id: int, course: Optional[str] = None
+) -> list[Recipe]:
+    """Recipes attached to a plan day (Milestone 16), optionally filtered
+    to one course (`side`/`dessert`) — resolved via `recipes.course`, not
+    a column on `plan_day_dishes` itself (see docs/DECISIONS.md). Ordered
+    by name, same as `list_recipes()`. Resolves each attached row via
+    `get_recipe()` one at a time rather than a JOIN, matching how
+    `build_grocery_list()` (services/grocery_list.py) already resolves a
+    plan day's main recipe — this list is at most a handful of rows, so
+    the extra round trips aren't worth a different style here.
+    """
+    rows = conn.execute(
+        "SELECT recipe_id FROM plan_day_dishes WHERE plan_day_id = %s", (plan_day_id,)
+    ).fetchall()
+    dishes = [get_recipe(conn, row[0]) for row in rows]
+    dishes = [dish for dish in dishes if dish is not None]
+    if course:
+        dishes = [dish for dish in dishes if dish.course == course]
+    return sorted(dishes, key=lambda dish: dish.name.lower())
 
 
 def swap_day_recipe(

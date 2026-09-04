@@ -2248,3 +2248,92 @@ consistent with keeping the layers simple (`docs/AGENT_INSTRUCTIONS.md`
 Calendar, not duplicated onto Week Plan. Week Plan's empty state was
 updated to point at Weekly Calendar instead of naming a button that no
 longer lives there.
+
+## 2026-09-04 — Milestone 16 Phase 2: side/dessert attach UI, staging, and a real transaction bug caught before it shipped
+
+**Staging mechanism, confirmed against the actual code rather than
+assumed.** `household_size_override` and `assigned_recipe_id` are both
+staged pre-generation on `CalendarDay`/`st.session_state["weekly_calendar"]`
+and only carried into real `plan_days` rows by `generate_week_plan()` —
+there's no path that edits an already-generated day's household size or
+special-occasion assignment directly; the only way to change either is
+to regenerate. Side/dessert attachments follow the identical pattern:
+two new `CalendarDay` fields, `side_recipe_ids`/`dessert_recipe_ids`
+(plural lists, not a single id like `assigned_recipe_id`), staged the
+same way and written into `plan_day_dishes` via a new `attach_dish()`
+right after each day's `plan_days` row is inserted inside
+`generate_week_plan()`'s existing transaction. This was the only option
+that made sense anyway — `plan_day_dishes.plan_day_id` can't reference a
+row that doesn't exist yet, so attaching before generation was never
+possible.
+
+**Two `CalendarDay` fields, not one merged list**, even though
+`plan_day_dishes` itself has no `course` column (Phase 1 decision).
+`plan_day_dishes` doesn't need to know which course an attachment is
+(it's derived from `recipes.course` at read time), but the *staging*
+structure is UI-adjacent and matches the two distinct picker sections on
+Weekly Calendar — merging them would mean re-deriving "which of these
+ids are sides" from a recipe lookup every time the Side dishes section
+needs its own default, for no benefit since nothing downstream needed
+them merged.
+
+**Shared UI helper confirmed practical, not forced.** The Side dishes
+and Dessert sections are identical in shape to each other (yes/no ->
+which day(s) -> per-day picker) and close to the household-size/special-
+occasion sections' shape too, differing only in: household size uses a
+number input, special-occasion uses a single-select (one recipe per
+day), and side/dessert use a multi-select (several dishes per day, the
+one actual behavioral difference from special-occasion's picker). That
+one difference is exactly why the *existing* three sections were never
+factored together — but since the two *new* sections differ from each
+other only in course/labels, they factor cleanly into one
+`_render_dish_attachment_section()` helper without forcing anything.
+
+**Symmetric multi-select for both, confirmed with no counterexample
+found.** Multiple desserts on one day (e.g. cake and ice cream for a
+dinner party) is an ordinary case with no less justification than
+multiple sides — no special-casing added.
+
+**A real bug caught by testing rather than assumed away: `conn.commit()`
+inside `conn.transaction()` raises.** `generate_week_plan()` wraps its
+`week_plans` + 7× `plan_days` insert sequence in `with conn.transaction():`
+specifically so a failure partway through can't leave a partial plan
+(Milestone 13 Phase 1). Every other service function in this codebase
+that writes data calls `conn.commit()` explicitly after its own
+`execute()` — harmless under `autocommit=True` (each statement lands
+immediately regardless), so nobody had reason to notice the explicit
+call does anything at all. `attach_dish()`/`detach_dish()` are the first
+functions ever called *from inside* an already-open `transaction()`
+block (`generate_week_plan()` calls them per day, mid-transaction) — and
+psycopg raises `ProgrammingError: Explicit commit() forbidden within a
+Transaction context` if you do that. Confirmed directly with a throwaway
+script against the real dev database before writing either function, not
+assumed from memory of psycopg's docs. Fix: `attach_dish()`/
+`detach_dish()` have no explicit `conn.commit()` at all, unlike every
+other write function in this codebase — standalone calls are still
+durable immediately via `autocommit=True`, and calls from inside
+`generate_week_plan()`'s transaction no longer raise. Flagging the
+inconsistency here rather than silently deviating from the codebase's own
+pattern without explanation, since a future function copy-pasting the
+"other" style into a similar transaction context would hit the exact
+same bug.
+
+**Confirmed, not just re-trusted: swapping a day's main leaves its
+attachments alone.** The Phase 1 investigation predicted this from
+reading `swap_day_recipe()` (it only ever runs
+`UPDATE plan_days SET recipe_id = ...`). Added a direct regression test
+this round instead of leaving that as an unverified claim —
+`test_swap_day_recipe_leaves_plan_day_dishes_untouched` generates a plan
+with a day carrying an attached side, swaps that day's main, and asserts
+`list_dishes()` for that day is unchanged.
+
+**Week Plan display stays read-only for this phase, confirmed as
+reasonable rather than assumed.** Household size and special-occasion
+assignment are only editable pre-generation (regenerating is the only
+way to change them post-generation), which is *why* Week Plan has never
+offered to edit them. `plan_day_dishes` doesn't share that constraint —
+it's a genuinely independent table keyed by `plan_day_id`, so a detach
+action on an already-generated day is technically straightforward to add
+later without needing to touch the "Weekly Calendar owns all
+pre-generation input" model at all. Noted for a future round if wanted;
+not built now, since the request scoped this phase to read-only display.
