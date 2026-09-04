@@ -46,6 +46,24 @@ def test_create_recipe_rejects_invalid_seasonality(conn):
         make_recipe(conn, seasonality="not-a-season")
 
 
+def test_create_recipe_defaults_course_to_main(conn):
+    recipe_id = make_recipe(conn)
+    recipe = recipe_service.get_recipe(conn, recipe_id)
+    assert recipe.course == "main"
+
+
+def test_create_recipe_accepts_side_and_dessert_courses(conn):
+    side_id = make_recipe(conn, name="Salad", course="side")
+    dessert_id = make_recipe(conn, name="Crumble", course="dessert")
+    assert recipe_service.get_recipe(conn, side_id).course == "side"
+    assert recipe_service.get_recipe(conn, dessert_id).course == "dessert"
+
+
+def test_create_recipe_rejects_invalid_course(conn):
+    with pytest.raises(ValueError):
+        make_recipe(conn, course="starter")
+
+
 def test_get_recipe_returns_recipe(conn):
     recipe_id = make_recipe(conn, name="Tacos")
     recipe = recipe_service.get_recipe(conn, recipe_id)
@@ -71,6 +89,19 @@ def test_update_recipe_rejects_invalid_seasonality(conn):
     recipe_id = make_recipe(conn)
     with pytest.raises(ValueError):
         recipe_service.update_recipe(conn, recipe_id, seasonality="nope")
+
+
+def test_update_recipe_changes_course(conn):
+    recipe_id = make_recipe(conn)
+    recipe_service.update_recipe(conn, recipe_id, course="dessert")
+    recipe = recipe_service.get_recipe(conn, recipe_id)
+    assert recipe.course == "dessert"
+
+
+def test_update_recipe_rejects_invalid_course(conn):
+    recipe_id = make_recipe(conn)
+    with pytest.raises(ValueError):
+        recipe_service.update_recipe(conn, recipe_id, course="starter")
 
 
 def test_update_recipe_noop_with_no_fields(conn):
@@ -114,6 +145,14 @@ def test_list_recipes_filters_special_occasion_only(conn):
     make_recipe(conn, name="Holiday Roast", is_special_occasion=True)
     results = recipe_service.list_recipes(conn, special_occasion_only=True)
     assert [r.name for r in results] == ["Holiday Roast"]
+
+
+def test_list_recipes_filters_by_course(conn):
+    make_recipe(conn, name="Chicken Curry")
+    make_recipe(conn, name="Garden Salad", course="side")
+    make_recipe(conn, name="Apple Crumble", course="dessert")
+    results = recipe_service.list_recipes(conn, course="side")
+    assert [r.name for r in results] == ["Garden Salad"]
 
 
 def test_list_recipes_ordered_by_name(conn):

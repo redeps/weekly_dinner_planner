@@ -26,7 +26,7 @@ import concurrent.futures
 import streamlit as st
 
 from database import get_connection
-from models import SEASONALITIES, STORE_CATEGORIES
+from models import COURSES, SEASONALITIES, STORE_CATEGORIES
 from services import ai_assist, categorization, photos, recipe_import
 from services.auth import require_password
 from services.ingredients import list_ingredients, replace_recipe_ingredients
@@ -232,6 +232,11 @@ seasonality = st.selectbox(
     SEASONALITIES,
     index=SEASONALITIES.index(existing.seasonality if existing else "all-season"),
 )
+course = st.selectbox(
+    "Course",
+    COURSES,
+    index=COURSES.index(existing.course if existing else "main"),
+)
 is_quick_fallback = st.checkbox(
     "Quick-fallback recipe (near-zero-effort option)",
     value=existing.is_quick_fallback if existing else False,
@@ -367,6 +372,7 @@ if submitted:
             seasonality=seasonality,
             is_quick_fallback=is_quick_fallback,
             is_special_occasion=is_special_occasion,
+            course=course,
             servings=int(servings),
             instructions=instructions or None,
             notes=notes or None,

@@ -308,3 +308,46 @@ for the full reasoning behind each.
 - **Overlap-aware plan generation**, favoring shared ingredients across a
   week's recipes — 2026-09-03, plus a same-day multi-week stability
   check.
+
+## Milestone 16 — Side Dishes and Desserts ⬜
+
+Attach side dishes (salad, Yorkshire pudding) and desserts to a plan
+day's main recipe. Manual-attach only in v1 — automatic plan generation
+never assigns a side or dessert, mirroring how special-occasion recipes
+started manual-first (Milestone 14/`docs/DECISIONS.md`). Sized as a
+phased breakdown, not one contained pass, given the number of screens
+touched (Add/Edit Recipe, Recipes browsing, Weekly Calendar, Week Plan,
+Grocery List, Cook Mode) and that the join table below is the schema's
+first many-to-many relationship — see docs/DECISIONS.md for the full
+investigation this milestone is based on.
+
+- **Data model:** `recipes.course` (`TEXT NOT NULL DEFAULT 'main'`, one
+  of `main`/`side`/`dessert` — a discriminator like `seasonality`, not an
+  independent flag like `is_quick_fallback`/`is_special_occasion`, since
+  a recipe can't be more than one course at once). `plan_day_dishes`
+  (`id`, `plan_day_id` FK → `plan_days.id` `ON DELETE CASCADE`,
+  `recipe_id` FK → `recipes.id`, `UNIQUE(plan_day_id, recipe_id)`) — one
+  shared table for both sides and desserts attached to a day, not two
+  separate tables and not a denormalized `course` column on the
+  attachment row; which course an attached recipe is comes from joining
+  to `recipes.course`, never duplicated onto the join row.
+- **Phase 1 — Data model + Add/Edit Recipe + Recipes browsing ✅ done:**
+  the two migrations above; a course selectbox on Add/Edit Recipe; a
+  course filter and course badge on Recipes browsing; `list_recipes()`
+  gains an optional `course` filter. No plan/grocery/cook-mode behavior
+  changes yet — fully testable in isolation.
+- **Phase 2 — Weekly Calendar attach UI + Week Plan display:** two new
+  week-gated sections on the Weekly Calendar screen (yes/no -> which
+  day(s) -> per-day multiselect of that course's recipes), symmetric
+  multi-select for both sides and desserts (no concrete reason found for
+  single-select on desserts). A new attach/detach/list service. Week Plan
+  renders each day's attached dishes alongside its main.
+- **Phase 3 — Grocery List aggregation:** extend `build_grocery_list()`
+  to aggregate ingredients from every attached dish per day, not just the
+  main — confirmed to need no new scaling/canonicalization logic, since
+  `effective_ingredient_quantity()` is already per-recipe and
+  course-agnostic.
+- **Phase 4 — Cook Mode multi-dish switcher:** a day with several
+  attached dishes gets a switcher between them (not concatenated steps —
+  real dishes are cooked in parallel, not as one linear sequence), each
+  with its own independently-tracked step progress.

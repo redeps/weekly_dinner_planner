@@ -150,6 +150,35 @@ SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         # browsing.
         "ALTER TABLE recipes ADD COLUMN IF NOT EXISTS is_special_occasion INTEGER NOT NULL DEFAULT 0",
     ),
+    (
+        10,
+        # A discriminator (one of models.COURSES), not an independent 0/1
+        # flag like is_quick_fallback/is_special_occasion above — a recipe
+        # can't be more than one course at once, so this follows
+        # `seasonality`'s shape instead. DEFAULT 'main' backfills every
+        # existing recipe the same way DEFAULT 0 backfilled
+        # is_special_occasion in migration 9. See docs/DECISIONS.md —
+        # Milestone 16.
+        "ALTER TABLE recipes ADD COLUMN IF NOT EXISTS course TEXT NOT NULL DEFAULT 'main'",
+    ),
+    (
+        11,
+        # Milestone 16 — which non-main recipes are attached to which plan
+        # day. One shared table for both sides and desserts, not two
+        # separate tables and not a denormalized `course` column here —
+        # which course an attached recipe is comes from joining to
+        # recipes.course, never duplicated onto this row (see
+        # docs/DECISIONS.md for the reasoning). UNIQUE prevents attaching
+        # the same recipe to the same day twice.
+        """
+        CREATE TABLE IF NOT EXISTS plan_day_dishes (
+            id SERIAL PRIMARY KEY,
+            plan_day_id INTEGER NOT NULL REFERENCES plan_days(id) ON DELETE CASCADE,
+            recipe_id INTEGER NOT NULL REFERENCES recipes(id),
+            UNIQUE (plan_day_id, recipe_id)
+        )
+        """,
+    ),
 ]
 
 _EXPORT_TABLES = [
@@ -160,6 +189,7 @@ _EXPORT_TABLES = [
     "cook_history",
     "app_settings",
     "email_recipients",
+    "plan_day_dishes",
 ]
 
 

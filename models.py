@@ -12,6 +12,7 @@ from typing import Optional
 
 SEASONALITIES = ("winter", "spring", "summer", "fall", "all-season")
 STORE_CATEGORIES = ("produce", "dairy", "meat", "pantry", "frozen", "other")
+COURSES = ("main", "side", "dessert")
 DAYS_OF_WEEK = (
     "monday",
     "tuesday",
@@ -34,6 +35,7 @@ class Recipe:
     seasonality: str
     is_quick_fallback: bool
     is_special_occasion: bool
+    course: str
     servings: int
     instructions: Optional[str]
     notes: Optional[str]

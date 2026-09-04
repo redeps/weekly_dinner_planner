@@ -11,7 +11,7 @@ from typing import Optional
 import psycopg
 from psycopg.rows import dict_row
 
-from models import SEASONALITIES, Recipe
+from models import COURSES, SEASONALITIES, Recipe
 
 _NOW_EXPR = "to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD HH24:MI:SS')"
 
@@ -59,6 +59,7 @@ def _row_to_recipe(row: dict) -> Recipe:
         seasonality=row["seasonality"],
         is_quick_fallback=bool(row["is_quick_fallback"]),
         is_special_occasion=bool(row["is_special_occasion"]),
+        course=row["course"],
         servings=row["servings"],
         instructions=row["instructions"],
         notes=row["notes"],
@@ -77,6 +78,11 @@ def _validate_seasonality(seasonality: str) -> None:
         raise ValueError(f"Invalid seasonality: {seasonality!r}")
 
 
+def _validate_course(course: str) -> None:
+    if course not in COURSES:
+        raise ValueError(f"Invalid course: {course!r}")
+
+
 def create_recipe(
     conn: psycopg.Connection,
     *,
@@ -87,19 +93,21 @@ def create_recipe(
     servings: int,
     is_quick_fallback: bool = False,
     is_special_occasion: bool = False,
+    course: str = "main",
     instructions: Optional[str] = None,
     notes: Optional[str] = None,
     photo_path: Optional[str] = None,
 ) -> int:
     """Insert a new recipe and return its id."""
     _validate_seasonality(seasonality)
+    _validate_course(course)
     cursor = conn.execute(
         """
         INSERT INTO recipes (
             name, photo_path, cook_time_minutes, family_enjoyment,
-            seasonality, is_quick_fallback, is_special_occasion, servings,
-            instructions, notes
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            seasonality, is_quick_fallback, is_special_occasion, course,
+            servings, instructions, notes
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
         (
@@ -110,6 +118,7 @@ def create_recipe(
             seasonality,
             int(is_quick_fallback),
             int(is_special_occasion),
+            course,
             servings,
             instructions,
             notes,
@@ -126,6 +135,8 @@ def update_recipe(conn: psycopg.Connection, recipe_id: int, **fields) -> None:
         return
     if "seasonality" in fields:
         _validate_seasonality(fields["seasonality"])
+    if "course" in fields:
+        _validate_course(fields["course"])
     if "is_quick_fallback" in fields:
         fields["is_quick_fallback"] = int(fields["is_quick_fallback"])
     if "is_special_occasion" in fields:
@@ -153,11 +164,12 @@ def list_recipes(
     season: Optional[str] = None,
     quick_fallback_only: bool = False,
     special_occasion_only: bool = False,
+    course: Optional[str] = None,
     include_inactive: bool = False,
 ) -> list[Recipe]:
     """List recipes, optionally filtered by name search, season,
-    quick-fallback, or special-occasion status. Inactive (soft-deleted)
-    recipes are excluded by default."""
+    quick-fallback, special-occasion status, or course. Inactive
+    (soft-deleted) recipes are excluded by default."""
     query = "SELECT * FROM recipes WHERE 1=1"
     params: list = []
     if not include_inactive:
@@ -172,6 +184,9 @@ def list_recipes(
         query += " AND is_quick_fallback = 1"
     if special_occasion_only:
         query += " AND is_special_occasion = 1"
+    if course:
+        query += " AND course = %s"
+        params.append(course)
     query += " ORDER BY LOWER(name)"
     rows = _dict_cursor(conn).execute(query, params).fetchall()
     return [_row_to_recipe(row) for row in rows]

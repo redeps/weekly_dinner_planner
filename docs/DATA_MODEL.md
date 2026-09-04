@@ -10,7 +10,9 @@ The Foundation prototype (Milestone 0) does **not** yet create these tables —
 Milestone 1 introduces `recipes`. Milestone 2 introduces
 `recipe_ingredients`. Milestone 4 introduces `week_plans` and `plan_days`.
 Milestone 7 introduces `cook_history`. Milestone 14 introduces
-`app_settings` and `plan_days.household_size_override`.
+`app_settings` and `plan_days.household_size_override`. Milestone 16
+introduces `recipes.course` and `plan_day_dishes` (Phase 1 so far — see
+`docs/ROADMAP.md`).
 
 ## RECIPES
 
@@ -23,6 +25,8 @@ Milestone 7 introduces `cook_history`. Milestone 14 introduces
 | family_enjoyment    | integer   | e.g. 1–5 rating                                     |
 | seasonality         | text      | winter / spring / summer / fall / all-season        |
 | is_quick_fallback   | boolean   | true = low-effort seed option (frozen pizza, takeout, etc.); a signal to the generator, not a separate table |
+| is_special_occasion | boolean   | true = hard-excluded from automatic plan generation, still selectable via swap or direct assignment (Milestone 14 — undocumented here until now, see docs/DECISIONS.md) |
+| course              | text      | main / side / dessert (Milestone 16) — a discriminator like `seasonality`, not an independent flag like the two above, since a recipe is exactly one course |
 | servings            | integer   |                                                    |
 | instructions        | text, nullable | ordered steps, free text                       |
 | notes               | text, nullable |                                                    |
@@ -72,6 +76,29 @@ recipe live together here.
 
 Swapping a day's recipe = updating `recipe_id` on its `plan_days` row. This
 does not touch other days or require regenerating the week.
+
+## PLAN_DAY_DISHES
+
+Milestone 16. Which side/dessert recipes are attached to a plan day,
+alongside its single main (`plan_days.recipe_id`) — this schema's first
+many-to-many relationship, since a day can have several sides (e.g. salad
+*and* Yorkshire pudding) and a side/dessert recipe could in principle be
+attached on more than one day. One shared table for both sides and
+desserts, not two separate tables. No `course` column here: which course
+an attached recipe is comes from joining to `recipes.course` — storing it
+again on this row would duplicate a property of the recipe, not of the
+attachment, and risk drifting if a recipe's course is edited later. Manual
+attach only in v1 (Phase 2, not yet built as of Phase 1) — automatic plan
+generation never writes to this table.
+
+| column       | type      | notes                                                |
+|--------------|-----------|----------------------------------------------------------|
+| id           | integer PK |                                                          |
+| plan_day_id  | integer FK → plan_days.id, `ON DELETE CASCADE` |                    |
+| recipe_id    | integer FK → recipes.id |                                            |
+
+`UNIQUE(plan_day_id, recipe_id)` — a recipe can't be attached to the same
+day twice.
 
 ## APP_SETTINGS
 
@@ -167,6 +194,9 @@ RECIPES ──< RECIPE_INGREDIENTS
 WEEK_PLANS ──< PLAN_DAYS >── RECIPES
 
 RECIPES ──< COOK_HISTORY >── PLAN_DAYS
+
+PLAN_DAYS >── PLAN_DAY_DISHES ──< RECIPES   (many-to-many: a day's
+                                             attached sides/desserts)
 
 APP_SETTINGS  (standalone — no foreign keys; a single global-config row)
 ```

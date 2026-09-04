@@ -6,7 +6,7 @@ browse recipe cards. See docs/PRODUCT_SPEC.md §15.
 import streamlit as st
 
 from database import get_connection
-from models import SEASONALITIES
+from models import COURSES, SEASONALITIES
 from services import photos
 from services.auth import require_password
 from services.recipes import list_recipes
@@ -22,18 +22,21 @@ if st.button("+ Add Recipe"):
     st.session_state.pop("edit_recipe_id", None)
     st.switch_page("pages/2_Add_Edit_Recipe.py")
 
-col1, col2, col3 = st.columns([2, 1, 1])
+col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
 with col1:
     search = st.text_input("Search", placeholder="Search by name")
 with col2:
     season = st.selectbox("Season", ["All"] + list(SEASONALITIES))
 with col3:
+    course = st.selectbox("Course", ["All"] + list(COURSES))
+with col4:
     quick_only = st.checkbox("Quick-fallback only")
 
 recipes = list_recipes(
     conn,
     search=search or None,
     season=None if season == "All" else season,
+    course=None if course == "All" else course,
     quick_fallback_only=quick_only,
 )
 
@@ -56,11 +59,14 @@ else:
                 if recipe.is_special_occasion:
                     title += " 🎉"
                 st.subheader(title)
-                st.caption(
+                caption = (
                     f"{recipe.cook_time_minutes} min · "
                     f"{'⭐' * recipe.family_enjoyment} · "
                     f"{recipe.seasonality}"
                 )
+                if recipe.course != "main":
+                    caption += f" · {recipe.course}"
+                st.caption(caption)
             with cols[2]:
                 if st.button("View", key=f"view_{recipe.id}"):
                     st.session_state["selected_recipe_id"] = recipe.id
