@@ -2205,3 +2205,46 @@ revisit this once the recipe pool grows large enough that no-repeat-
 within-week stops forcing near-universal weekly coverage on its own —
 that's the point at which rotation avoidance's independent contribution
 (if any) would actually become visible and worth re-measuring.
+
+## 2026-09-04 — Moved "Generate New Plan" from Week Plan to Weekly Calendar
+
+**Confirmed prior architecture before changing anything.** The button and
+its `generate_week_plan()` call lived on `pages/5_Week_Plan.py`, not
+`pages/4_Weekly_Calendar.py`. The two pages were already coupled through
+`st.session_state["weekly_calendar"]` — a plain `list[CalendarDay]`, not
+a service call or database row (see the calendar page's own docstring:
+the calendar is intentionally not database-backed). Weekly Calendar
+rebuilt that list from its widgets at the end of every script run; Week
+Plan only read it, seeding a default copy via `build_default_week_calendar()`
+if a user reached Week Plan first without ever visiting Weekly Calendar
+in that session.
+
+**Change:** the rebuild of `st.session_state["weekly_calendar"]` moved up
+to immediately follow the special-occasion section (previously it sat at
+the very end of the file, after the unrelated Email recipients section),
+and the "Generate New Plan" button now sits right after it, before Email
+recipients. This was required, not cosmetic: the button needs the
+*current* run's rebuilt list, and the per-day locals it's built from
+(`busy_and_time_by_day`, `household_override_by_day`,
+`assigned_recipe_by_day`) are already fresh by that point in the script,
+same as they were at the old end-of-file location. On success the page
+calls `st.switch_page("pages/5_Week_Plan.py")` instead of `st.rerun()`,
+so the new plan is immediately visible — same pattern as Home's
+"+ Add Recipe" button.
+
+**Week Plan goes clean — no generate/regenerate affordance kept there,
+and no `weekly_calendar` session-state seeding either (nothing on that
+page reads it anymore, so seeding it was dead code once the button
+moved).** Considered keeping a "Regenerate" button on Week Plan too, for
+a quick re-roll without navigating back. Rejected: Weekly Calendar is now
+the one place all of a plan's inputs (busy days, dinner times, household
+size, special-occasion assignment) are entered, and a second generate
+entry point on Week Plan would let someone regenerate against a calendar
+they never actually looked at this session (or a stale one from earlier),
+silently reintroducing the exact ambiguity a single entry point removes.
+Two copies of the same action with no distinct purpose also isn't
+consistent with keeping the layers simple (`docs/AGENT_INSTRUCTIONS.md`
+§7) — mirrors why special-occasion assignment lives only on Weekly
+Calendar, not duplicated onto Week Plan. Week Plan's empty state was
+updated to point at Weekly Calendar instead of naming a button that no
+longer lives there.

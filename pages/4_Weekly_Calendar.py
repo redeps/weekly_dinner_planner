@@ -1,9 +1,10 @@
 """
 Weekly Calendar Input screen — a 7-day busy toggle + dinner-ready time
-form, plus the global default household size and an optional per-day
+form, plus the global default household size, an optional per-day
 household-size override for days you're hosting or cooking for more than
-usual, and an optional per-day direct assignment of a special-occasion
-recipe. See docs/PRODUCT_SPEC.md §7 and §15.
+usual, an optional per-day direct assignment of a special-occasion recipe,
+and the "Generate New Plan" action that carries all of the above into a
+new week plan. See docs/PRODUCT_SPEC.md §7 and §15.
 
 Not database-backed: the calendar is re-entered each time rather than
 persisted per week — see docs/DECISIONS.md. `generate_week_plan()` carries
@@ -17,11 +18,21 @@ computes its yes/no radio's `index=` and its multiselect's `default=` from
 the radio/multiselect's own widget-level session state alone — navigating
 to another page and back can silently drop that widget state, and without
 a computed default the gate falls back to "No" and the section's own
-end-of-script rebuild then overwrites still-correct values with None. The
-busy/dinner-time inputs above were never affected, since they're rendered
-unconditionally every run and already compute their `value=` from the
-durable list. See docs/DECISIONS.md.
+rebuild (right after the special-occasion section, so the Generate button
+below it sees fresh values) then overwrites still-correct values with
+None. The busy/dinner-time inputs above were never affected, since they're
+rendered unconditionally every run and already compute their `value=` from
+the durable list. See docs/DECISIONS.md.
+
+Generation itself lives here rather than on the Week Plan screen (moved
+after Milestone 15) — this page is the single place all pre-generation
+input is entered, so clicking Generate right after entering it needs no
+page switch. Week Plan no longer offers a generate/regenerate action at
+all — see docs/DECISIONS.md for why a second copy of this button there
+was rejected rather than kept as a convenience.
 """
+
+import datetime as dt
 
 import streamlit as st
 
@@ -30,6 +41,7 @@ from models import DAYS_OF_WEEK, CalendarDay
 from services.auth import require_password
 from services.calendar import build_default_week_calendar
 from services.email import add_recipient, list_recipients, remove_recipient
+from services.plan_generation import generate_week_plan
 from services.recipes import list_recipes
 from services.settings import get_default_household_size, set_default_household_size
 
@@ -157,6 +169,31 @@ if special_occasion_recipes:
             if chosen_recipe_id is not None:
                 assigned_recipe_by_day[day_name] = chosen_recipe_id
 
+st.session_state["weekly_calendar"] = [
+    CalendarDay(
+        day_of_week=day_name,
+        is_busy=busy_and_time_by_day[day_name][0],
+        dinner_ready_time=busy_and_time_by_day[day_name][1],
+        household_size_override=household_override_by_day.get(day_name),
+        assigned_recipe_id=assigned_recipe_by_day.get(day_name),
+    )
+    for day_name in DAYS_OF_WEEK
+]
+
+st.divider()
+if st.button("Generate New Plan", type="primary"):
+    today = dt.date.today()
+    week_start = today - dt.timedelta(days=today.weekday())  # this week's Monday
+    try:
+        generate_week_plan(
+            conn,
+            week_start_date=week_start,
+            calendar=st.session_state["weekly_calendar"],
+        )
+        st.switch_page("pages/5_Week_Plan.py")
+    except ValueError as exc:
+        st.error(str(exc))
+
 st.divider()
 st.subheader("Email recipients")
 st.caption("The weekly plan can be emailed to this list from the Week Plan page.")
@@ -179,14 +216,3 @@ if st.button("Add recipient"):
         st.rerun()
     except ValueError as exc:
         st.error(str(exc))
-
-st.session_state["weekly_calendar"] = [
-    CalendarDay(
-        day_of_week=day_name,
-        is_busy=busy_and_time_by_day[day_name][0],
-        dinner_ready_time=busy_and_time_by_day[day_name][1],
-        household_size_override=household_override_by_day.get(day_name),
-        assigned_recipe_id=assigned_recipe_by_day.get(day_name),
-    )
-    for day_name in DAYS_OF_WEEK
-]

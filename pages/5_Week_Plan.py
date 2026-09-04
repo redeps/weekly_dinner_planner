@@ -2,12 +2,15 @@
 Week Plan screen — 7 days, each clickable into its recipe, with a swap
 action per day. See docs/PRODUCT_SPEC.md §15 and §10.
 
+Generating a new plan happens on the Weekly Calendar screen, not here —
+see that page's docstring and docs/DECISIONS.md. This page only ever reads
+the latest week plan and offers post-generation actions (swap, finalize,
+email, cook).
+
 The optional swap-intent hint (AI Assist, docs/AGENT_INSTRUCTIONS.md §6)
 just doesn't appear when Ollama isn't reachable — Swap always works with
 or without it.
 """
-
-import datetime as dt
 
 import streamlit as st
 
@@ -15,15 +18,9 @@ from database import get_connection
 from models import DAYS_OF_WEEK
 from services import ai_assist, photos
 from services.auth import require_password
-from services.calendar import build_default_week_calendar
 from services.cook_history import finalize_plan, has_been_cooked, mark_day_cooked
 from services.email import SmtpConnectionError, list_recipients, send_weekly_plan_email
-from services.plan_generation import (
-    generate_week_plan,
-    get_latest_week_plan,
-    list_plan_days,
-    swap_day_recipe,
-)
+from services.plan_generation import get_latest_week_plan, list_plan_days, swap_day_recipe
 from services.recipes import get_recipe
 
 st.set_page_config(page_title="Week Plan — Meal Planner", page_icon="🍽️")
@@ -35,28 +32,12 @@ ai_available = ai_assist.is_available()
 
 st.title("Week Plan")
 
-if "weekly_calendar" not in st.session_state:
-    st.session_state["weekly_calendar"] = build_default_week_calendar()
-
 week_plan = get_latest_week_plan(conn)
-
-if st.button("Generate New Plan", type="primary"):
-    today = dt.date.today()
-    week_start = today - dt.timedelta(days=today.weekday())  # this week's Monday
-    try:
-        generate_week_plan(
-            conn,
-            week_start_date=week_start,
-            calendar=st.session_state["weekly_calendar"],
-        )
-        st.rerun()
-    except ValueError as exc:
-        st.error(str(exc))
 
 if not week_plan:
     st.info(
-        "No week plan yet. Add some recipes and click **Generate New Plan** "
-        "to create one."
+        "No week plan yet. Set up your week on the **Weekly Calendar** page "
+        "and click **Generate New Plan** there to create one."
     )
     st.stop()
 
