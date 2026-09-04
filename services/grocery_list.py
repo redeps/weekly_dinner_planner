@@ -1,12 +1,15 @@
 """
 Grocery list generation — aggregates recipe_ingredients across the current
 week plan's 7 days (each day's main recipe *and* every attached side/
-dessert, Milestone 16 Phase 3), grouped by store category (see
-docs/PRODUCT_SPEC.md §11). Nothing here is persisted: the list is
-computed fresh from the current `plan_days` + `plan_day_dishes` +
-`recipe_ingredients` every time it's built, so a swapped day or a changed
-attachment is reflected automatically the next time it's viewed — no
-check-off state or shopping-mode UI, per docs/DECISIONS.md.
+dessert, Milestone 16 Phase 3) plus manual grocery items (Milestone 17 —
+this week's one-off paste-ins and every standing recurring item), grouped
+by store category (see docs/PRODUCT_SPEC.md §11). Nothing here is
+persisted beyond the manual items themselves: the list is computed fresh
+from the current `plan_days` + `plan_day_dishes` + `recipe_ingredients` +
+`manual_grocery_items` every time it's built, so a swapped day, a changed
+attachment, or an added/removed manual item is reflected automatically
+the next time it's viewed — no check-off state or shopping-mode UI, per
+docs/DECISIONS.md.
 
 Household-size scaling (Milestone 14): each day's ingredient quantities
 are scaled by that day's effective household size (its own
@@ -55,6 +58,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from models import STORE_CATEGORIES
+from services.grocery_items import list_manual_items
 from services.ingredient_canonicalization import canonicalize_ingredient_name, normalize_unit
 from services.ingredients import list_ingredients
 from services.plan_generation import list_dishes, list_plan_days
@@ -85,12 +89,44 @@ class GroceryItem:
     lines: list[GroceryUnitLine] = field(default_factory=list)
 
 
+def _accumulate(
+    aggregated: dict[tuple, dict],
+    *,
+    name: str,
+    quantity: Optional[float],
+    unit: Optional[str],
+    store_category: str,
+) -> None:
+    """Fold one already-scaled (or unscaled, for a manual item) quantity
+    line into `aggregated`, keyed by (canonical name, normalized unit,
+    store category) — the one grouping/summing rule shared by every
+    ingredient source `build_grocery_list()` reads from, recipe-derived
+    or manual."""
+    canonical = canonicalize_ingredient_name(name)
+    normalized_unit = normalize_unit(unit) or None
+    key = (canonical, normalized_unit, store_category)
+    entry = aggregated.setdefault(
+        key,
+        {
+            "canonical": canonical,
+            "unit": normalized_unit,
+            "store_category": store_category,
+            "quantity": None,
+        },
+    )
+    if quantity is not None:
+        entry["quantity"] = round((entry["quantity"] or 0) + quantity, 2)
+
+
 def build_grocery_list(
     conn: psycopg.Connection, week_plan_id: int
 ) -> dict[str, list[GroceryItem]]:
     """Aggregate ingredients across a week plan's 7 days — each day's main
     recipe *and* every side/dessert attached to it (Milestone 16 Phase 3,
-    `services.plan_generation.list_dishes`), not just the main.
+    `services.plan_generation.list_dishes`), not just the main — plus
+    every manual grocery item for the week (Milestone 17,
+    `services.grocery_items.list_manual_items`): this week's own one-off
+    paste-ins and every standing recurring item.
 
     Counted once per day per dish, so a recipe repeated within the week
     (as a main, or attached to more than one day) contributes its
@@ -99,13 +135,18 @@ def build_grocery_list(
     matches (case/whitespace-insensitively) — a differing unit becomes a
     separate line within the same group rather than being combined.
     Grouped by store category, empty categories omitted, items sorted
-    alphabetically by canonical name within each category.
+    alphabetically by canonical name within each category. A manual item
+    sharing a canonical name with a recipe-derived ingredient (e.g. a
+    recurring "Milk" and a recipe that also needs milk) merges into the
+    same group via this same key — no separate dedup logic needed.
 
     An attached side/dessert scales exactly like a main — same
     `effective_ingredient_quantity()` call, keyed off its own `servings`
     and the day's household size/override, since scaling is a per-recipe
     concept with no course-awareness needed (confirmed during the
-    Milestone 16 Phase 1 investigation, see docs/DECISIONS.md).
+    Milestone 16 Phase 1 investigation, see docs/DECISIONS.md). A manual
+    item is used exactly as entered, with no scaling attempt — it has no
+    `servings` to scale from, since it isn't derived from any recipe.
     """
     aggregated: dict[tuple, dict] = {}
     default_household_size = get_default_household_size(conn)
@@ -120,18 +161,6 @@ def build_grocery_list(
 
         for recipe in day_recipes:
             for ingredient in list_ingredients(conn, recipe.id):
-                canonical = canonicalize_ingredient_name(ingredient.name)
-                unit = normalize_unit(ingredient.unit) or None
-                key = (canonical, unit, ingredient.store_category)
-                entry = aggregated.setdefault(
-                    key,
-                    {
-                        "canonical": canonical,
-                        "unit": unit,
-                        "store_category": ingredient.store_category,
-                        "quantity": None,
-                    },
-                )
                 scaled_quantity = effective_ingredient_quantity(
                     ingredient.quantity,
                     recipe_servings=recipe.servings,
@@ -139,8 +168,22 @@ def build_grocery_list(
                     household_size_override=plan_day.household_size_override,
                     default_household_size=default_household_size,
                 )
-                if scaled_quantity is not None:
-                    entry["quantity"] = round((entry["quantity"] or 0) + scaled_quantity, 2)
+                _accumulate(
+                    aggregated,
+                    name=ingredient.name,
+                    quantity=scaled_quantity,
+                    unit=ingredient.unit,
+                    store_category=ingredient.store_category,
+                )
+
+    for item in list_manual_items(conn, week_plan_id):
+        _accumulate(
+            aggregated,
+            name=item.name,
+            quantity=item.quantity,
+            unit=item.unit,
+            store_category=item.store_category,
+        )
 
     items_by_group: dict[tuple, GroceryItem] = {}
     for entry in aggregated.values():

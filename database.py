@@ -179,6 +179,31 @@ SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         )
         """,
     ),
+    (
+        12,
+        # Milestone 17 — grocery items not derived from any recipe: a
+        # one-off paste-in ("add once, for this week only") and a
+        # standing recurring item ("always include, every week") are the
+        # same row shape, distinguished only by whether week_plan_id is
+        # set — not two separate tables (see docs/DECISIONS.md). NULL =
+        # recurring, matched by every week; a set value scopes the row to
+        # that one week only, so it naturally stops showing up once a
+        # newer week_plan_id exists — no "consumed"/expiry bookkeeping
+        # needed. Same name/quantity/unit/store_category shape as
+        # recipe_ingredients, since it's aggregated by build_grocery_list()
+        # the same way.
+        f"""
+        CREATE TABLE IF NOT EXISTS manual_grocery_items (
+            id SERIAL PRIMARY KEY,
+            week_plan_id INTEGER REFERENCES week_plans(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            quantity REAL,
+            unit TEXT,
+            store_category TEXT NOT NULL DEFAULT 'other',
+            created_at TEXT NOT NULL DEFAULT {_NOW_EXPR}
+        )
+        """,
+    ),
 ]
 
 _EXPORT_TABLES = [
@@ -190,6 +215,7 @@ _EXPORT_TABLES = [
     "app_settings",
     "email_recipients",
     "plan_day_dishes",
+    "manual_grocery_items",
 ]
 
 

@@ -368,3 +368,50 @@ investigation this milestone is based on. ✅ Fully complete (all 4 phases).
   attached dish through the new switcher would have shown its
   ingredients unscaled — broadened to check membership in the day's main
   *or* any of its attached dishes.
+
+
+## Milestone 17 — Manual Grocery Items ✅
+
+Grocery items not derived from any recipe: a one-off paste-in for this
+week only, and standing recurring items included every week. Merged into
+one capability rather than built as two separate features — investigated
+first and confirmed no real reason to keep them apart; see
+docs/DECISIONS.md for the full investigation and implementation notes.
+Sized as one contained pass, not phased, given the small surface (one
+table, one small service module, one page's worth of UI).
+
+- `manual_grocery_items` — one table, not two, with a nullable
+  `week_plan_id` (`NULL` = recurring, matched by every week; a set value
+  scopes a row to that one week only). Same
+  name/quantity/unit/store_category shape as `recipe_ingredients`. This
+  naturally gives correct one-off/recurring reappearance behavior with
+  no "consumed" flag or cleanup job — a one-off item just stops matching
+  once a newer week exists.
+- `services/grocery_items.py` — CRUD (`add_item`/`remove_item`/
+  `list_manual_items`) mirroring the `ingredients.py`/`grocery_list.py`
+  split, plus `parse_leading_quantity()`: a small, purpose-built regex
+  that extracts a leading plain number from a pasted line into
+  `quantity` before storage — fixing a real data-loss bug found during
+  investigation (a whole line stored as `name` with no separate quantity
+  would silently lose a leading number to
+  `canonicalize_ingredient_name()`'s own noise-stripping at grocery-list
+  build time).
+- `services/grocery_list.py`'s `build_grocery_list()` gained one small,
+  shared accumulation step (`_accumulate()`, also used by the existing
+  per-ingredient loop) that folds every manual item — this week's
+  one-offs plus every recurring item — into the same aggregation used
+  for recipe-derived ingredients. A manual item sharing a canonical name
+  with a recipe ingredient merges into one line automatically, no dedup
+  logic needed.
+- Grocery List screen: a shared paste-in-and-review UI
+  (`_render_paste_in_section`), used for both one-off and recurring
+  items, differing only in which `week_plan_id` is written to — text
+  area → parse → an editable preview (Name/Qty/Unit/Category, reusing
+  Add/Edit Recipe's ingredient-row editor shape) → confirm. Both live on
+  the Grocery List page, not Weekly Calendar — that's where the result
+  is seen, and recurring items have no real connection to calendar/
+  scheduling concepts, unlike the two standing settings (default
+  household size, email recipients) that already live on Weekly
+  Calendar for reasons specific to that page. A persistent add/remove
+  list (mirroring `email_recipients`' own UI) is shown for both this
+  week's added one-off items and the standing recurring list.

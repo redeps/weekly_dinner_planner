@@ -101,3 +101,19 @@ class CookHistoryEntry:
     plan_day_id: Optional[int]
     cooked_on: str
     created_at: str
+
+
+@dataclass
+class ManualGroceryItem:
+    """A grocery item not derived from any recipe (Milestone 17) — a
+    one-off paste-in or a standing recurring item, distinguished only by
+    `week_plan_id`: `None` means recurring (included in every week),
+    a set value scopes it to that one week only. See docs/DATA_MODEL.md."""
+
+    id: int
+    week_plan_id: Optional[int]
+    name: str
+    quantity: Optional[float]
+    unit: Optional[str]
+    store_category: str
+    created_at: str

@@ -11,8 +11,8 @@ Milestone 1 introduces `recipes`. Milestone 2 introduces
 `recipe_ingredients`. Milestone 4 introduces `week_plans` and `plan_days`.
 Milestone 7 introduces `cook_history`. Milestone 14 introduces
 `app_settings` and `plan_days.household_size_override`. Milestone 16
-introduces `recipes.course` and `plan_day_dishes` (Phases 1-2 so far — see
-`docs/ROADMAP.md`).
+introduces `recipes.course` and `plan_day_dishes` (all 4 phases complete
+— see `docs/ROADMAP.md`). Milestone 17 introduces `manual_grocery_items`.
 
 ## RECIPES
 
@@ -101,6 +101,36 @@ whatever a day's calendar input already staged (see
 
 `UNIQUE(plan_day_id, recipe_id)` — a recipe can't be attached to the same
 day twice.
+
+## MANUAL_GROCERY_ITEMS
+
+Milestone 17. Grocery items not derived from any recipe — a one-off
+paste-in for a specific week, or a standing recurring item included in
+every week. One table, one nullable `week_plan_id` flag, not two
+separate tables for the two cases: `NULL` means recurring (matched by
+every week's list); a set value scopes the row to that one week only.
+This naturally gives correct "don't silently reappear" / "always
+reappear" behavior with no extra bookkeeping — a one-off item just stops
+matching once a newer `week_plan_id` exists, and a recurring item is
+matched unconditionally, forever, until removed. Same
+name/quantity/unit/store_category shape as `recipe_ingredients`, since
+`services/grocery_list.py`'s `build_grocery_list()` aggregates both the
+same way (see `services/grocery_items.py`).
+
+A pasted line's leading plain number (if any) is parsed into `quantity`
+at add-time, not re-parsed from a stored blob on every read
+(`docs/AGENT_INSTRUCTIONS.md` §3) — see docs/DECISIONS.md for the
+data-loss bug this fixes.
+
+| column        | type      | notes                                                  |
+|---------------|-----------|-------------------------------------------------------------|
+| id            | integer PK |                                                             |
+| week_plan_id  | integer FK → week_plans.id, nullable, `ON DELETE CASCADE` | `NULL` = recurring |
+| name          | text      |                                                             |
+| quantity      | number, nullable |                                                      |
+| unit          | text, nullable |                                                        |
+| store_category | text     | produce / dairy / meat / pantry / frozen / other, default "other" |
+| created_at    | timestamp |                                                             |
 
 ## APP_SETTINGS
 
@@ -199,6 +229,11 @@ RECIPES ──< COOK_HISTORY >── PLAN_DAYS
 
 PLAN_DAYS >── PLAN_DAY_DISHES ──< RECIPES   (many-to-many: a day's
                                              attached sides/desserts)
+
+WEEK_PLANS ──< MANUAL_GROCERY_ITEMS   (week_plan_id nullable: NULL rows
+                                        are recurring, matched by every
+                                        week, not just the one they'd
+                                        otherwise belong to)
 
 APP_SETTINGS  (standalone — no foreign keys; a single global-config row)
 ```

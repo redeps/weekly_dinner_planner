@@ -2415,3 +2415,73 @@ there, on entry.
 
 Milestone 16 (Side Dishes and Desserts) is now fully complete — all four
 phases done.
+
+## 2026-09-04 — Milestone 17: manual grocery items — merged design, a real paste-in bug, and placement
+
+**Merged one-off/recurring into one table, confirmed rather than assumed.**
+Investigated for a real reason to keep "add once, for this week" and
+"always include, every week" as separate tables before building either.
+Found none: `manual_grocery_items` has a single nullable `week_plan_id`
+— `NULL` means recurring (matched by every week's `list_manual_items()`
+call), a set value scopes a row to that one week only. This also gives
+the consumption behavior flagged during investigation for free, with no
+"consumed" flag or cleanup job: a one-off item is tied to one
+`week_plan_id`, and every new week gets a new one, so an old one-off item
+structurally can't resurface; a recurring item (`NULL`) is matched
+unconditionally, forever. Two tables would have meant writing every
+operation (add, list, aggregate) twice for no behavioral difference —
+same reasoning as Milestone 16's `plan_day_dishes` not being split into
+`plan_day_sides`/`plan_day_desserts`.
+
+**A real data-loss bug found during investigation, not hypothesized,
+and fixed with a small, purpose-built regex.** The obvious naive
+approach — store an entire pasted line as `name`, leave `quantity`
+`NULL` — is broken: `canonicalize_ingredient_name()` (built for
+recipe-import artifacts) already strips a leading bare number as noise
+when grouping the grocery list. A pasted `"6 eggs"` stored whole as
+`name` would silently lose the `6` and render as `Eggs` with quantity
+`—`. Fixed with `services.grocery_items.parse_leading_quantity()`: a
+new, much simpler regex than the recipe-import one (no unit-word
+matching, no fraction support — no measured real-world need for either
+here, unlike the recipe-import case that motivated that complexity) that
+extracts only a leading plain number followed by whitespace into
+`quantity`, leaving everything else — including packaging words like
+"rolls" or "boxes" — in `name`. Requiring the trailing whitespace is
+what keeps `"24oz peanut butter"` from being wrongly split into
+quantity=24 — there's no space between the digits and the letters, so it
+isn't a leading *count*, just a size descriptor embedded in the name.
+Parsing happens once, at add time, not re-parsed from a stored blob on
+every read (`docs/AGENT_INSTRUCTIONS.md` §3).
+
+**One shared paste-in-and-review UI, not two.** Both the one-off and
+recurring sections on the Grocery List page call the same
+`_render_paste_in_section()`, differing only in the `week_plan_id`
+argument (a specific week vs. `None`) — the same "one flag, one
+mechanism" idea carried into the UI layer, not just the data model. The
+review step reuses Add/Edit Recipe's existing ingredient-row editor
+shape (Name/Qty/Unit/Category, each editable, with a per-row remove
+button) rather than inventing a new interaction pattern — this also
+gives users a way to fix a wrong parse (e.g. a quantity embedded
+mid-line, which the leading-number regex deliberately doesn't attempt to
+find) before anything is saved.
+
+**Placement: Grocery List, not Weekly Calendar — confirmed during the
+investigation, implemented as proposed.** Weekly Calendar already hosts
+two standing (non-per-week) things — default household size and email
+recipients — but both are calendar/send-adjacent in a way recurring
+grocery items simply aren't; their only real connection is to the
+grocery list itself. Splitting one capability across two pages (recurring
+on Calendar, one-off on Grocery List) would have undercut treating them
+as one mechanism. Both paste-in sections and both persistent add/remove
+lists (mirroring `email_recipients`' own list UI) live on the Grocery
+List page, below the generated table.
+
+**Scope line deliberately not crossed: the recurring-items section only
+appears once a week plan exists.** The Grocery List page's early
+`st.info(...); st.stop()` when no week plan exists yet still gates the
+whole page, including the recurring-items management section, even
+though recurring items themselves have no week dependency. Managing
+recurring items before ever generating a first plan is a real but minor
+edge case (Milestone 4 happens almost immediately in normal use) — not
+built now, consistent with not over-engineering for a case that hasn't
+been asked for.

@@ -5,6 +5,7 @@ Milestone 6 tests: grocery list aggregation (services/grocery_list.py).
 import pytest
 
 import database
+from services import grocery_items as grocery_items_service
 from services import grocery_list as grocery_service
 from services import ingredients as ingredient_service
 from services import plan_generation as plan_service
@@ -401,6 +402,81 @@ def test_build_grocery_list_sorts_items_alphabetically_within_category(conn):
     result = grocery_service.build_grocery_list(conn, week_plan_id)
 
     assert [item.name for item in result["produce"]] == ["Apple", "Zucchini"]
+
+
+# --- Milestone 17: manual grocery items ---
+
+
+def test_build_grocery_list_includes_a_one_off_manual_item(conn):
+    week_plan_id = make_week_plan(conn, [("monday", None)])
+    grocery_items_service.add_item(
+        conn, week_plan_id=week_plan_id, name="Birthday candles", store_category="other"
+    )
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [item.name for item in result["other"]] == ["Birthday candles"]
+
+
+def test_build_grocery_list_includes_a_recurring_manual_item(conn):
+    week_plan_id = make_week_plan(conn, [("monday", None)])
+    grocery_items_service.add_item(
+        conn, week_plan_id=None, name="Dish soap", store_category="other"
+    )
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [item.name for item in result["other"]] == ["Dish soap"]
+
+
+def test_build_grocery_list_excludes_a_one_off_item_scoped_to_a_different_week(conn):
+    week_a = make_week_plan(conn, [("monday", None)], week_start="2026-08-31")
+    week_b = make_week_plan(conn, [("monday", None)], week_start="2026-09-07")
+    grocery_items_service.add_item(conn, week_plan_id=week_a, name="Birthday candles")
+
+    result_b = grocery_service.build_grocery_list(conn, week_b)
+    assert result_b == {}
+
+
+def test_build_grocery_list_recurring_item_appears_across_multiple_weeks(conn):
+    week_a = make_week_plan(conn, [("monday", None)], week_start="2026-08-31")
+    week_b = make_week_plan(conn, [("monday", None)], week_start="2026-09-07")
+    grocery_items_service.add_item(conn, week_plan_id=None, name="Dish soap")
+
+    assert [i.name for i in grocery_service.build_grocery_list(conn, week_a)["other"]] == ["Dish soap"]
+    assert [i.name for i in grocery_service.build_grocery_list(conn, week_b)["other"]] == ["Dish soap"]
+
+
+def test_build_grocery_list_merges_manual_item_with_matching_recipe_ingredient(conn):
+    """A recurring/one-off manual item sharing a canonical name with a
+    recipe-derived ingredient must merge into one line, not show twice --
+    confirming the design decision that no separate dedup logic is
+    needed (see docs/DECISIONS.md)."""
+    recipe = make_recipe(
+        conn, "Pancakes", [{"name": "milk", "quantity": 200, "unit": "ml", "store_category": "dairy"}]
+    )
+    week_plan_id = make_week_plan(conn, [("monday", recipe)])
+    grocery_items_service.add_item(
+        conn, week_plan_id=None, name="milk", quantity=300, unit="ml", store_category="dairy"
+    )
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert [item.name for item in result["dairy"]] == ["Milk"]
+    assert len(result["dairy"][0].lines) == 1
+    assert result["dairy"][0].lines[0].quantity == 500
+
+
+def test_build_grocery_list_manual_item_quantity_is_not_scaled(conn):
+    """A manual item has no recipe `servings` to scale from -- used
+    exactly as entered, regardless of the day's household size."""
+    from services.settings import set_default_household_size
+
+    set_default_household_size(conn, 20)
+    week_plan_id = make_week_plan(conn, [("monday", None)])
+    grocery_items_service.add_item(
+        conn, week_plan_id=week_plan_id, name="Eggs", quantity=6, store_category="dairy"
+    )
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+    assert result["dairy"][0].lines[0].quantity == 6
 
 
 # --- Ingredient name canonicalization (services/ingredient_canonicalization.py) ---
