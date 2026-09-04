@@ -319,7 +319,7 @@ phased breakdown, not one contained pass, given the number of screens
 touched (Add/Edit Recipe, Recipes browsing, Weekly Calendar, Week Plan,
 Grocery List, Cook Mode) and that the join table below is the schema's
 first many-to-many relationship — see docs/DECISIONS.md for the full
-investigation this milestone is based on.
+investigation this milestone is based on. ✅ Fully complete (all 4 phases).
 
 - **Data model:** `recipes.course` (`TEXT NOT NULL DEFAULT 'main'`, one
   of `main`/`side`/`dessert` — a discriminator like `seasonality`, not an
@@ -356,7 +356,15 @@ investigation this milestone is based on.
   already per-recipe and course-agnostic. A day's attached dishes are
   included even if that day has no main recipe assigned — the two are
   independent.
-- **Phase 4 — Cook Mode multi-dish switcher:** a day with several
+- **Phase 4 — Cook Mode multi-dish switcher ✅ done:** a day with several
   attached dishes gets a switcher between them (not concatenated steps —
   real dishes are cooked in parallel, not as one linear sequence), each
-  with its own independently-tracked step progress.
+  with its own independently-tracked step progress
+  (`cook_mode_step_index_by_recipe`, keyed by recipe id). A day with no
+  attached dishes shows no switcher at all, unchanged from before this
+  phase. Along the way, fixed a real gap the switcher would otherwise
+  have exposed: the day-scoped ingredient-scaling check only ever
+  compared against `plan_days.recipe_id` (the main), so viewing an
+  attached dish through the new switcher would have shown its
+  ingredients unscaled — broadened to check membership in the day's main
+  *or* any of its attached dishes.

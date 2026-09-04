@@ -2362,3 +2362,56 @@ attached-dish tests. Scaling composes for free: `effective_ingredient_quantity()
 takes whichever recipe's own `servings` plus the day's household
 size/override, with no course-awareness, so an attached dish scales
 under the exact same day-level override as the main.
+
+## 2026-09-04 — Milestone 16 Phase 4: Cook Mode multi-dish switcher, and a scaling gap the switcher would have exposed
+
+**Session-state shape confirmed before changing it, not assumed.** The
+pre-Phase-4 page tracked exactly two keys: `cook_mode_recipe_id` (the
+last-seen recipe, to detect "is this a fresh visit") and a single
+`cook_mode_step_index` (one recipe's progress). That single global index
+can't survive a switcher — switching from the main to a dessert and back
+would otherwise reset or blend their progress. Replaced with three keys:
+`cook_mode_entry_recipe_id` + `cook_mode_plan_day_id` (together, "is this
+a fresh visit," extending the old single-key check with the day too —
+see below) and `cook_mode_step_index_by_recipe` (a dict keyed by recipe
+id, so each dish keeps its own place) plus `cook_mode_active_recipe_id`
+(which dish the switcher currently has selected). Switching dishes via
+the switcher deliberately does not trigger the "fresh visit" reset — only
+a different entry recipe or a different day does.
+
+**Fresh-visit detection extended to also key off `plan_day_id`, not just
+the recipe id.** The old check (`cook_mode_recipe_id != recipe.id`) alone
+would under-reset in a case Phase 4 makes newly relevant: the same
+recipe reached from two different days (e.g. a repeated main) would
+share one step-progress entry across both days' visits. Once progress is
+tracked per recipe id in a dict that persists across a whole Cook Mode
+session, that staleness would leak into the new dict too if left
+unchanged. Including `plan_day_id` in the reset key closes this — a
+minor, deliberate behavior change, not a side effect.
+
+**A real scaling gap found while wiring the switcher, not hypothesized.**
+The existing day-scoping check was `plan_day.recipe_id == recipe.id` —
+correct when the only recipe ever shown was the day's main, but the
+switcher now lets the *entry point* remain the same while `recipe` itself
+gets reassigned to whichever dish is selected. Left unchanged, viewing an
+attached side/dessert through the switcher would have shown it
+day-scoped as `False` — its ingredients silently unscaled, contradicting
+the Phase 1/3 finding that attached dishes scale exactly like mains.
+Fixed by widening the membership check to the day's main *or* any of its
+`list_dishes()` results, confirmed with a direct test
+(`test_attached_dish_ingredients_scale_like_the_main`) rather than left
+as an assumption once the switcher existed.
+
+**Switcher only appears when there's something to switch to** — a day
+with no attached dishes renders nothing here at all, confirmed unchanged
+against the full pre-existing `tests/test_ingredient_scaling_ui.py` Cook
+Mode suite (all 10 cases, none touching dishes, still pass unmodified).
+
+**Week Plan's "Cook" button needs no change, confirmed against the
+current code rather than re-trusted from the Phase 2 proposal** — it
+still sets `selected_recipe_id`/`selected_plan_day_id` to the day's main
+and switches to Cook Mode; the switcher is discovered entirely from
+there, on entry.
+
+Milestone 16 (Side Dishes and Desserts) is now fully complete — all four
+phases done.
