@@ -694,3 +694,25 @@ def test_grocery_list_csv_empty_list_produces_header_only(conn):
     csv_text = grocery_service.grocery_list_csv(grocery_list)
     lines = csv_text.strip().splitlines()
     assert lines == ["Category,Ingredient,Quantity,Unit"]
+
+
+def test_grocery_list_csv_includes_one_off_and_recurring_manual_items(conn):
+    """Milestone 17 follow-up verification: the CSV export path
+    (grocery_list_table_rows() -> grocery_list_csv()), not just the
+    on-page table, must include manual items -- both draw from the same
+    build_grocery_list() output via the _accumulate() refactor, so this
+    is confirming that composition directly rather than assuming it."""
+    week_plan_id = make_week_plan(conn, [("monday", None)])
+    grocery_items_service.add_item(
+        conn, week_plan_id=week_plan_id, name="Birthday candles", store_category="other"
+    )
+    grocery_items_service.add_item(
+        conn, week_plan_id=None, name="Dish soap", quantity=2, store_category="other"
+    )
+
+    grocery_list = grocery_service.build_grocery_list(conn, week_plan_id)
+    csv_text = grocery_service.grocery_list_csv(grocery_list)
+    lines = set(csv_text.strip().splitlines())
+
+    assert "Other,Birthday candles,—,—" in lines
+    assert "Other,Dish soap,2,—" in lines
