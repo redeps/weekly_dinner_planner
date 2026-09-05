@@ -567,6 +567,40 @@ def test_build_grocery_list_uses_stored_category_when_no_override_set(conn):
     assert [i.name for i in result["pantry"]] == ["Milk"]
 
 
+def test_build_grocery_list_fetches_overrides_once_not_per_ingredient_line(conn, monkeypatch):
+    """Regression test for the confirmed query-per-row bottleneck (see
+    docs/DECISIONS.md): get_all_overrides() must be called exactly once
+    per build_grocery_list() call, regardless of how many ingredient
+    lines it aggregates -- not once per line."""
+    from services import category_overrides as override_service
+
+    distinct_names = [
+        "apple", "banana", "carrot", "date", "eggplant", "fig",
+        "grape", "honeydew", "iceberg lettuce", "jicama", "kale", "lime",
+    ]
+    ingredients = [
+        {"name": name, "quantity": 1, "unit": "each", "store_category": "other"}
+        for name in distinct_names
+    ]
+    recipe = make_recipe(conn, "Many Ingredients", ingredients)
+    week_plan_id = make_week_plan(conn, [("monday", recipe)])
+
+    call_count = 0
+    original = override_service.get_all_overrides
+
+    def counting_get_all_overrides(conn_arg):
+        nonlocal call_count
+        call_count += 1
+        return original(conn_arg)
+
+    monkeypatch.setattr(grocery_service, "get_all_overrides", counting_get_all_overrides)
+
+    result = grocery_service.build_grocery_list(conn, week_plan_id)
+
+    assert len(result["other"]) == 12  # confirms all 12 lines were actually processed
+    assert call_count == 1, f"expected exactly 1 bulk fetch, got {call_count}"
+
+
 # --- Milestone 18 Phase 1: build_grocery_list() is unaffected by a prior
 # week's shopping_completed_at -- recurring items still reappear and
 # one-off items still don't leak, exactly as before this feature, with

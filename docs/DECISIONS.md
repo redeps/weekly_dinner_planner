@@ -2684,3 +2684,73 @@ task explicitly asked to confirm rather than assume it, and pure code
 inspection doesn't prove a runtime dict came back byte-for-byte the same.
 
 Milestone 18 (Shopping Mode) is now fully complete — both phases done.
+
+## 2026-09-05 — Grocery list category-override lookup was a real query-per-row bottleneck, fixed and measured
+
+**Investigated before assuming.** A report of slow response when
+checking off an item in shopping mode was profiled with real
+`time.perf_counter()` instrumentation against the real dev DB (public
+schema, week_plan_id=4 — 7 real recipes, 71 real `recipe_ingredients`
+rows for the week), not estimated. Every phase a checkbox click actually
+triggers was timed separately.
+
+**Confirmed: `_accumulate()` called `get_override()` once per ingredient
+line** — 71 individual round-trip queries against
+`ingredient_category_overrides` for this one week, one per line, exactly
+the query-per-row pattern suspected. Measured before the fix (median of
+5 runs): `build_grocery_list()` took **19.2 ms** total, of which **12.5
+ms (65%)** was spent inside those 71 `get_override()` calls
+(~0.18 ms/call).
+
+**Confirmed as a non-issue, not assumed: `get_connection()`.** The
+*first* connection in a process took ~422 ms (one-time cost — Postgres
+backend startup / connection-check overhead), but every subsequent call
+in the same process took ~7–8 ms. Since a Streamlit session keeps the
+same Python process alive across reruns, a checkbox-click rerun pays the
+~7–8 ms warm cost, not the ~422 ms cold one — connection overhead is not
+a meaningful contributor to per-click latency. `check_item()`/
+`uncheck_item()` were also confirmed fast in isolation (~1 ms each,
+median of 5 rounds) — the write itself was never the problem.
+
+**Fix: `services/category_overrides.py` gains `get_all_overrides(conn)`**
+— one query fetching the whole table as `{canonical_name:
+store_category}` — called once per `build_grocery_list()` call instead
+of `get_override()` being called once per line. `_accumulate()` now
+takes this dict directly (`overrides.get(canonical, store_category)`)
+instead of a `conn` it queried itself. `get_override()` (the single-row
+lookup) is kept unchanged and still used by
+`suggest_category_with_override()` — that call site is naturally
+one-ingredient-at-a-time as a user adds rows in Add/Edit Recipe, not a
+tight aggregation loop, so it was never part of the actual bottleneck
+and didn't need to change.
+
+**Measured, not claimed, after the fix** (same dev DB, same week plan,
+median of 5 runs each): `build_grocery_list()` dropped from **19.2 ms to
+5.9 ms** — a **~3.3x speedup** (69% reduction), with `get_override()`'s
+share now at 0 calls / 0 ms (it's no longer called from this path at
+all). Estimated single checkbox-click rerun (warm `get_connection()` +
+`check_item()` + rebuild) dropped from **~27.7 ms to ~14.5 ms**.
+Re-verified correctness with 15 real overrides actually set (not just
+the trivial zero-override case) — `build_grocery_list()`'s output was
+confirmed to still correctly reflect every override (a sampled
+overridden ingredient, "plain flour" → produce, appeared under the
+right category), and timing stayed at the same ~6 ms regardless. Full
+pytest suite (564 tests) still green after the change; a new regression
+test (`test_build_grocery_list_fetches_overrides_once_not_per_ingredient_line`)
+asserts `get_all_overrides()` is called exactly once per
+`build_grocery_list()` call regardless of ingredient-line count.
+
+**Scale note, since the absolute numbers on localhost are small:** ~28
+ms of backend time per click is not itself perceptible as "slow" — real
+end-to-end click latency in a browser is dominated by Streamlit's own
+rerender/WebSocket round trip, not this. The query-per-row pattern
+matters more for two realistic reasons this fix protects against going
+forward: (1) it scales linearly with ingredient-line count, so a larger
+household with more attached sides/desserts/manual items would have paid
+proportionally more; (2) this app's own architecture decision
+(`docs/DECISIONS.md` — Milestone 13 hosting) is to eventually run against
+a remote Postgres (Neon), where each round trip costs real network RTT
+(commonly 10–50+ ms) instead of localhost's sub-millisecond latency — 71
+such round trips would have compounded into hundreds of milliseconds to
+seconds once actually deployed, which localhost profiling alone could
+never have caught.

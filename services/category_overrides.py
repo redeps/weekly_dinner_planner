@@ -36,12 +36,29 @@ def _validate_store_category(store_category: str) -> None:
 
 def get_override(conn: psycopg.Connection, canonical_name: str) -> Optional[str]:
     """The overridden store_category for a canonical ingredient name, or
-    `None` if none has been set."""
+    `None` if none has been set. A single-row lookup — fine for Add/Edit
+    Recipe's per-row suggestion (naturally one ingredient at a time as
+    the user adds them), but `build_grocery_list()` must use
+    `get_all_overrides()` instead: calling this once per ingredient line
+    in that loop was confirmed as a real, measurable query-per-row
+    bottleneck (65% of aggregation time on a real 71-line week) — see
+    docs/DECISIONS.md."""
     row = conn.execute(
         "SELECT store_category FROM ingredient_category_overrides WHERE canonical_name = %s",
         (canonical_name,),
     ).fetchone()
     return row[0] if row else None
+
+
+def get_all_overrides(conn: psycopg.Connection) -> dict[str, str]:
+    """Every persisted override as `{canonical_name: store_category}`,
+    fetched in one query. Built specifically for `build_grocery_list()`'s
+    aggregation loop, which needs to resolve a potentially large number
+    of ingredient lines against the override table in one pass — see
+    `get_override()`'s docstring and docs/DECISIONS.md for the profiling
+    that motivated this."""
+    rows = conn.execute("SELECT canonical_name, store_category FROM ingredient_category_overrides").fetchall()
+    return {row[0]: row[1] for row in rows}
 
 
 def set_override(conn: psycopg.Connection, canonical_name: str, store_category: str) -> None:

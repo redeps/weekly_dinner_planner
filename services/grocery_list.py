@@ -58,7 +58,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from models import STORE_CATEGORIES
-from services.category_overrides import get_override
+from services.category_overrides import get_all_overrides
 from services.grocery_items import list_manual_items
 from services.ingredient_canonicalization import canonicalize_ingredient_name, normalize_unit
 from services.ingredients import list_ingredients
@@ -91,8 +91,8 @@ class GroceryItem:
 
 
 def _accumulate(
-    conn: psycopg.Connection,
     aggregated: dict[tuple, dict],
+    overrides: dict[str, str],
     *,
     name: str,
     quantity: Optional[float],
@@ -114,9 +114,17 @@ def _accumulate(
     override is consulted: the grocery list is never cached, so
     resolving it here is already both retroactive and prospective with
     no need to rewrite any `recipe_ingredients` row (see docs/DECISIONS.md).
+
+    `overrides` is the whole override table, fetched once by the caller
+    (`get_all_overrides()`) — not a `conn` this function queries itself.
+    Confirmed by real profiling against a 71-line real week plan that
+    calling `get_override()` here, once per line, was a genuine
+    query-per-row bottleneck (65% of this function's total time); a
+    single dict lookup instead is effectively free (see docs/DECISIONS.md
+    for the before/after numbers).
     """
     canonical = canonicalize_ingredient_name(name)
-    effective_category = get_override(conn, canonical) or store_category
+    effective_category = overrides.get(canonical, store_category)
     normalized_unit = normalize_unit(unit) or None
     key = (canonical, normalized_unit, effective_category)
     entry = aggregated.setdefault(
@@ -170,6 +178,9 @@ def build_grocery_list(
     """
     aggregated: dict[tuple, dict] = {}
     default_household_size = get_default_household_size(conn)
+    # Fetched once, not once per ingredient line -- see _accumulate()'s
+    # docstring and docs/DECISIONS.md for the profiling behind this.
+    overrides = get_all_overrides(conn)
 
     for plan_day in list_plan_days(conn, week_plan_id):
         day_recipes = []
@@ -189,8 +200,8 @@ def build_grocery_list(
                     default_household_size=default_household_size,
                 )
                 _accumulate(
-                    conn,
                     aggregated,
+                    overrides,
                     name=ingredient.name,
                     quantity=scaled_quantity,
                     unit=ingredient.unit,
@@ -199,8 +210,8 @@ def build_grocery_list(
 
     for item in list_manual_items(conn, week_plan_id):
         _accumulate(
-            conn,
             aggregated,
+            overrides,
             name=item.name,
             quantity=item.quantity,
             unit=item.unit,
